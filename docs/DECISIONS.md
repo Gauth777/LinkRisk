@@ -47,3 +47,20 @@ For a transaction at time t, every relationship-derived feature must be computab
 
 ## D016 — Baseline operating point
 For the first baseline experiment, use a 1% false-positive-rate budget on the validation period and choose the threshold that maximizes recall while staying within that budget. This thresholding rule is fixed before graph-enhanced results are inspected. PR-AUC remains the primary threshold-independent ranking metric.
+
+## D017 — Selected relationship keys
+The training-only structural audit selected two direct relationship keys:
+
+1. `payment_device_profile = card1 + addr1 + DeviceInfo`
+2. `payment_receiver_profile = card1 + addr1 + R_emaildomain`
+
+These keys provide useful repetition while keeping observed group sizes materially smaller than broader alternatives. They are pseudo-entity keys, not assertions of real-world identity.
+
+## D018 — Rejected direct-edge keys
+`payment_core`, `payment_profile`, `identity_profile`, `device_environment`, and `device_display_profile` are rejected as direct graph edges for the MVP because their observed training groups can become excessively large, creating noisy or misleading components. `payment_email_profile` is also not promoted to a direct edge at this stage because its maximum group size remains too broad relative to the selected keys.
+
+## D019 — Temporal graph representation
+The MVP will use an implicit temporal bipartite graph implemented as streaming key histories rather than constructing one global NetworkX graph for all 590k transactions. This is more memory-efficient and makes the leakage rule explicit. NetworkX may still be used later for small local-neighborhood visualizations in the demo.
+
+## D020 — Same-timestamp safety
+Transactions sharing the exact same `TransactionDT` must not see each other as historical evidence. Features for all transactions at a timestamp are computed first; only then are those transactions added to relationship history. This preserves the rule that only strictly earlier events may influence the current score.
