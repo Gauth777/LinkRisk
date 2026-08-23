@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+data/raw/
+data/processed/
+*.csv
+*.parquet
+artifacts/models/*
+!artifacts/models/.gitkeep
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
