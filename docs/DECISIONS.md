@@ -64,3 +64,15 @@ The MVP will use an implicit temporal bipartite graph implemented as streaming k
 
 ## D020 — Same-timestamp safety
 Transactions sharing the exact same `TransactionDT` must not see each other as historical evidence. Features for all transactions at a timestamp are computed first; only then are those transactions added to relationship history. This preserves the rule that only strictly earlier events may influence the current score.
+
+## D021 — Training-only temporal normalization
+The training-only temporal audit found a 95th-percentile prior-1h count of 4 for both selected keys, and prior-24h 95th percentiles of 6 for `payment_device_profile` and 7 for `payment_receiver_profile`. These values are frozen as normalization caps before graph-enhanced validation results are inspected.
+
+## D022 — Graph risk heuristic
+For each selected relationship key, define an interpretable activity score using only prior history: `0.60 * clip(prior_1h / p95_1h, 0, 1) + 0.40 * clip(prior_24h / p95_24h, 0, 1)`. The overall graph-risk score is the maximum of the two key scores. This emphasizes short bursts while still capturing broader same-day reuse.
+
+## D023 — Graph confidence and exact fallback
+Graph confidence is based on independent relationship channels with prior 24h history: 0 active keys -> confidence 0.0; 1 active key -> 0.5; 2 active keys -> 1.0. When confidence is 0, the fused score must equal the ML baseline score exactly.
+
+## D024 — Fusion form and validation tuning
+Use monotonic confidence-gated uplift rather than allowing graph evidence to suppress the ML score: `fused = ml + alpha * confidence * graph_risk * (1 - ml)`. Before looking at graph-enhanced validation results, predeclare the alpha grid `[0.10, 0.20, 0.30, 0.40]`. On validation, each alpha receives its own threshold chosen under the same 1% FPR budget; select the alpha with highest recall, breaking ties by PR-AUC. The held-out test remains sealed until all choices are frozen.
