@@ -1,1 +1,0 @@
-"""SentinelGraph core package."""
