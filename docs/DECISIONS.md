@@ -1,4 +1,4 @@
-# SentinelGraph Engineering Decisions
+# LinkRisk Engineering Decisions
 
 ## D001 — Scope
 Detect coordinated payment abuse rather than build a general-purpose fraud platform.
