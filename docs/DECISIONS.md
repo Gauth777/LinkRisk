@@ -7,7 +7,7 @@ Detect coordinated payment abuse rather than build a general-purpose fraud platf
 Use a supervised transaction-level model to establish what can be detected without explicitly constructed relationship features.
 
 ## D003 — Baseline feature policy
-IEEE-CIS contains features that already encode counts/history/entity relations. The initial baseline excludes explicitly relation-engineered `C*` and `V*` families. The exact feature set will be frozen after dataset audit and documented before final evaluation.
+IEEE-CIS contains feature families that already encode counts, history, time-to-prior-event signals, and entity relations. The initial baseline excludes `C*`, `D*`, and `V*` families. The baseline may use the same raw point-in-time transaction and identity attributes available to LinkRisk so that the graph model's incremental signal comes from historical cross-transaction relationships rather than richer raw inputs. The exact feature list will be frozen before final held-out evaluation.
 
 ## D004 — Graph approach
 Use lightweight, interpretable graph-derived signals rather than a GNN.
