@@ -44,3 +44,6 @@ The ML-only and graph-enhanced systems should receive the same raw point-in-time
 
 ## D015 — Leakage rule
 For a transaction at time t, every relationship-derived feature must be computable from the current transaction and transactions strictly earlier than t. Future transactions are never allowed to influence the current score.
+
+## D016 — Baseline operating point
+For the first baseline experiment, use a 1% false-positive-rate budget on the validation period and choose the threshold that maximizes recall while staying within that budget. This thresholding rule is fixed before graph-enhanced results are inspected. PR-AUC remains the primary threshold-independent ranking metric.
