@@ -8,8 +8,9 @@ from typing import Any, Mapping
 
 CHAMPION_VERSION = "v0.5"
 CHAMPION_GATE_STRENGTH = 1.00
-REVIEW_THRESHOLD = 0.840618
-VERIFY_THRESHOLD = round(REVIEW_THRESHOLD * 0.75, 6)
+REVIEW_THRESHOLD = 0.8406179547309875
+VERIFY_THRESHOLD = 0.781202555
+TOTAL_INTERVENTION_BUDGET = 0.06
 STRONG_EVIDENCE_CONFIDENCE = 0.50
 MULTI_CHANNEL_CONFIDENCE = 0.70
 
@@ -94,12 +95,13 @@ def decide_action(
     graph_confidence: float,
     feedback: Mapping[str, Any] | None = None,
 ) -> RiskAction:
-    """Map the champion risk score to a transparent operational action.
+    """Map the champion score to the frozen operational policy.
 
-    REVIEW uses the frozen v0.5 validation operating threshold. VERIFY is a
-    deliberately simple business/demo band, not a separately optimized model
-    threshold. Strong matured relationship evidence may force VERIFY, but never
-    REVIEW by itself.
+    REVIEW uses the exact v0.5 development threshold. VERIFY uses the score
+    threshold calibrated, without validation fraud labels, to a 6% total
+    intervention target on the development period. That 6% is a calibration
+    target, not a runtime guarantee under distribution shift. Strong matured
+    relationship evidence may force VERIFY, but never REVIEW by itself.
     """
     risk = _unit_interval(linkrisk_risk, "linkrisk_risk")
     confidence = _unit_interval(graph_confidence, "graph_confidence")
