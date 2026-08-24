@@ -25,7 +25,7 @@ def test_v4_same_timestamp_rows_do_not_see_each_other():
 
     assert features.loc[0, "log_profile_prior_total"] == 0.0
     assert features.loc[1, "log_profile_prior_total"] == 0.0
-    assert features.loc[2, "log_profile_prior_total"] == np.log1p(2)
+    assert np.isclose(features.loc[2, "log_profile_prior_total"], np.log1p(2))
 
 
 def test_v4_confidence_gate_exact_fallback():
