@@ -37,7 +37,7 @@ IEEE-CIS is approved for the MVP. It contains 590,540 labelled transactions with
 Only 24.42% of transactions have a corresponding identity row. This is treated as a useful real-data property because it naturally creates strong, sparse, and missing relationship-evidence regimes for graph confidence and graceful fallback.
 
 ## D013 — Edge construction
-Single low-cardinality values must never be treated as identity edges by themselves. In particular, DeviceType, card4/card6, address, and email-domain values are too broad. LinkRisk will use higher-specificity composite pseudo-entity keys, multiple independent shared attributes, and temporal evidence instead of naive same-value linking.
+Single low-cardinality values must never be treated as identity edges by themselves. In particular, DeviceType, card4/card6, address, and email-domain values are too broad. LinkRisk will use higher-specificity composite pseudo-entity keys, multiple shared attributes, and temporal evidence instead of naive same-value linking.
 
 ## D014 — Comparison fairness
 The ML-only and graph-enhanced systems should receive the same raw point-in-time attributes wherever practical. LinkRisk's incremental signal must come from historical cross-transaction relationship features, not from secretly giving the graph model richer raw inputs.
@@ -72,7 +72,19 @@ The training-only temporal audit found a 95th-percentile prior-1h count of 4 for
 For each selected relationship key, define an interpretable activity score using only prior history: `0.60 * clip(prior_1h / p95_1h, 0, 1) + 0.40 * clip(prior_24h / p95_24h, 0, 1)`. The overall graph-risk score is the maximum of the two key scores. This emphasizes short bursts while still capturing broader same-day reuse.
 
 ## D023 — Graph confidence and exact fallback
-Graph confidence is based on independent relationship channels with prior 24h history: 0 active keys -> confidence 0.0; 1 active key -> 0.5; 2 active keys -> 1.0. When confidence is 0, the fused score must equal the ML baseline score exactly.
+Graph confidence is based on corroborating relationship channels with prior 24h history: 0 active keys -> confidence 0.0; 1 active key -> 0.5; 2 active keys -> 1.0. When confidence is 0, the fused score must equal the ML baseline score exactly.
 
 ## D024 — Fusion form and validation tuning
 Use monotonic confidence-gated uplift rather than allowing graph evidence to suppress the ML score: `fused = ml + alpha * confidence * graph_risk * (1 - ml)`. Before looking at graph-enhanced validation results, predeclare the alpha grid `[0.10, 0.20, 0.30, 0.40]`. On validation, each alpha receives its own threshold chosen under the same 1% FPR budget; select the alpha with highest recall, breaking ties by PR-AUC. The held-out test remains sealed until all choices are frozen.
+
+## D025 — Champion architecture after development experiments
+Validation experiments v0.1 through v0.4 established that unlabeled relationship structure alone did not materially improve the frozen transaction-only baseline. v0.5 adds delayed confirmed-fraud feedback memory: only training labels can enter the relationship memory, and only after a fixed simulated 72-hour adjudication delay. Validation labels never influence validation predictions. v0.5 achieved 32.12% recall, 53.36% precision, 0.3887 PR-AUC, and 0.9984% FPR on validation versus the frozen baseline's 28.83% recall, 50.72% precision, 0.3496 PR-AUC, and 0.9960% FPR.
+
+## D026 — Final modelling champion and stopping rule
+v0.6 added two-hop temporal fraud-network propagation under a replacement rule fixed before observing its result. It achieved 30.97% recall and 0.3735 PR-AUC, failing the rule relative to v0.5. v0.5 therefore remains the modelling champion. No further model or relationship-feature tuning will be performed before the sealed held-out evaluation. Frozen champion gate strength is 1.00 and the validation REVIEW operating threshold is 0.840618. Model scores are treated as risk/ranking scores, not calibrated fraud probabilities.
+
+## D027 — Operational action policy
+The product contract exposes `ALLOW`, `VERIFY`, and `REVIEW`. `REVIEW` begins at the frozen v0.5 validation operating threshold 0.840618. `VERIFY` begins at a transparent demonstration/business threshold equal to 75% of the REVIEW threshold (0.630464), or may be forced by high-confidence strong matured relationship evidence. Relationship evidence alone never forces `REVIEW`. These action bands are operational policy, not claims about calibrated fraud probability.
+
+## D028 — Deterministic evidence contract
+Every score must expose the transaction-only baseline risk, LinkRisk risk, graph confidence, selected action, model path, and deterministic evidence items. When graph confidence is zero, the model path is explicitly `baseline_fallback` and the LinkRisk risk must equal the baseline risk exactly. An LLM is not required to generate or interpret the evidence used for the risk decision.
