@@ -53,7 +53,7 @@ def test_frozen_champion_scorer_preserves_fallback_and_review():
     assert result.loc[10, "linkrisk_risk"] == 0.20
     assert result.loc[10, "model_path"] == "baseline_fallback"
     assert result.loc[10, "action"] == "ALLOW"
-    assert result.loc[11, "linkrisk_risk"] == 0.90
+    assert np.isclose(result.loc[11, "linkrisk_risk"], 0.90)
     assert result.loc[11, "action"] == "REVIEW"
 
 
