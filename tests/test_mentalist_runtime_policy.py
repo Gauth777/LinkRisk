@@ -16,6 +16,7 @@ def _policy() -> MentalistRuntimePolicy:
         version="test",
         min_clue_families=2,
         jane_score_threshold=0.80,
+        baseline_review_threshold=0.85,
         v5_verify_displacement_threshold=0.20,
         validation_intervention_target=0.06,
     )
@@ -34,6 +35,7 @@ def test_review_is_immutable() -> None:
     result = apply_runtime_policy(
         v5_actions=np.asarray(["REVIEW"], dtype=object),
         v5_risk=np.asarray([0.95]),
+        baseline_risk=np.asarray([0.95]),
         mentalist_state=_state([0.99], [4]),
         policy=_policy(),
     )
@@ -42,10 +44,11 @@ def test_review_is_immutable() -> None:
     assert not result.displaced_v5_verify.any()
 
 
-def test_jane_promotes_only_corrobated_allow() -> None:
+def test_jane_promotes_only_corroborated_allow() -> None:
     result = apply_runtime_policy(
         v5_actions=np.asarray(["ALLOW", "ALLOW", "ALLOW"], dtype=object),
         v5_risk=np.asarray([0.40, 0.40, 0.40]),
+        baseline_risk=np.asarray([0.40, 0.40, 0.40]),
         mentalist_state=_state([0.90, 0.90, 0.70], [2, 1, 3]),
         policy=_policy(),
     )
@@ -53,10 +56,23 @@ def test_jane_promotes_only_corrobated_allow() -> None:
     assert result.promoted_by_jane.tolist() == [True, False, False]
 
 
+def test_baseline_review_boundary_blocks_jane_promotion() -> None:
+    result = apply_runtime_policy(
+        v5_actions=np.asarray(["ALLOW", "ALLOW"], dtype=object),
+        v5_risk=np.asarray([0.40, 0.40]),
+        baseline_risk=np.asarray([0.90, 0.84]),
+        mentalist_state=_state([0.95, 0.95], [3, 3]),
+        policy=_policy(),
+    )
+    assert result.actions.tolist() == ["ALLOW", "VERIFY"]
+    assert result.promoted_by_jane.tolist() == [False, True]
+
+
 def test_weak_v5_verify_is_displaced_by_fixed_boundary() -> None:
     result = apply_runtime_policy(
         v5_actions=np.asarray(["VERIFY", "VERIFY"], dtype=object),
         v5_risk=np.asarray([0.10, 0.30]),
+        baseline_risk=np.asarray([0.10, 0.30]),
         mentalist_state=_state([0.10, 0.10], [0, 0]),
         policy=_policy(),
     )
@@ -68,6 +84,7 @@ def test_runtime_policy_reports_intervention_delta() -> None:
     result = apply_runtime_policy(
         v5_actions=np.asarray(["ALLOW", "VERIFY", "ALLOW"], dtype=object),
         v5_risk=np.asarray([0.10, 0.10, 0.10]),
+        baseline_risk=np.asarray([0.10, 0.10, 0.10]),
         mentalist_state=_state([0.90, 0.10, 0.85], [2, 0, 2]),
         policy=_policy(),
     )
@@ -81,6 +98,7 @@ def test_runtime_policy_rejects_misaligned_arrays() -> None:
         apply_runtime_policy(
             v5_actions=np.asarray(["ALLOW", "VERIFY"], dtype=object),
             v5_risk=np.asarray([0.1]),
+            baseline_risk=np.asarray([0.1, 0.2]),
             mentalist_state=_state([0.9, 0.1], [2, 0]),
             policy=_policy(),
         )
