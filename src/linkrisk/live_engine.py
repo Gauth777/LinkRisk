@@ -15,6 +15,14 @@ from linkrisk.feedback_features_v5 import (
     LABEL_DELAY_SECONDS,
     build_feedback_features_v5,
 )
+from linkrisk.mentalist_features_v7 import (
+    MENTALIST_FAMILIES,
+    build_mentalist_features_v7,
+)
+from linkrisk.mentalist_runtime_policy import (
+    FrozenMentalistScorer,
+    apply_runtime_policy,
+)
 from linkrisk.relationship_features_v4 import (
     build_relationship_features_v4,
     make_composite_key,
@@ -97,22 +105,33 @@ def _channel_keys(frame: pd.DataFrame) -> dict[str, pd.Series]:
     }
 
 
-class LiveLinkRiskEngine:
-    """Stateful demo runtime around the frozen LinkRisk v0.5 champion.
+def _numeric(mapping: Mapping[str, Any], key: str) -> float:
+    try:
+        value = float(mapping.get(key, 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+    return value if math.isfinite(value) else 0.0
 
-    For each incoming payment this engine recomputes the exact causal v4
-    relationship features and v5 delayed-feedback features over session history,
-    then calls the frozen baseline/specialist/gate/policy runtime. It is designed
-    for interactive sessions, not high-throughput production serving.
+
+class LiveLinkRiskEngine:
+    """Stateful reference runtime for frozen v0.5 + Mentalist v1.0.
+
+    v0.5 owns the transaction/trusted-memory risk score and hard REVIEW action.
+    Mentalist independently scores causal proactive evidence and may only alter
+    action routing through the frozen runtime policy. No Mentalist feature reads
+    fraud labels. The implementation recomputes session features for clarity and
+    reproducibility; it is not a high-throughput streaming architecture.
     """
 
     def __init__(
         self,
         scorer: FrozenChampionScorer,
         *,
+        mentalist_scorer: FrozenMentalistScorer | None = None,
         start_time: float = 0.0,
     ) -> None:
         self.scorer = scorer
+        self.mentalist_scorer = mentalist_scorer
         self.clock = float(start_time)
         self._rows: list[dict[str, Any]] = []
         self._records: dict[str, dict[str, Any]] = {}
@@ -167,11 +186,21 @@ class LiveLinkRiskEngine:
         frame: pd.DataFrame,
         current_id: str,
     ) -> pd.Series:
+        """Expose only outcomes actually available by the current clock.
+
+        The v0.5 experiment simulates a 72-hour delay from original transaction
+        time. Live adjudication can occur later than that delay, so the effective
+        availability time is max(transaction_time + 72h, recorded_at). This
+        prevents a late adjudication from being treated as if it had been known
+        earlier.
+        """
         eligible = pd.Series(False, index=frame.index, dtype=bool)
         for tx_id, adjudication in self._adjudications.items():
             if tx_id == current_id or tx_id not in eligible.index:
                 continue
-            if adjudication.recorded_at <= self.clock:
+            tx_time = float(frame.loc[tx_id, TIME_COL])
+            available_at = max(tx_time + LABEL_DELAY_SECONDS, adjudication.recorded_at)
+            if available_at <= self.clock:
                 eligible.loc[tx_id] = True
         return eligible
 
@@ -202,7 +231,61 @@ class LiveLinkRiskEngine:
             feedback.loc[[tx_id]],
         )
         decision = scored.loc[tx_id].to_dict()
+        v5_action = str(decision["action"])
+        decision["v5_action"] = v5_action
+        decision["routing_reason"] = "V5_ONLY"
+        decision["policy_version"] = "v0.5"
 
+        mentalist_payload: dict[str, Any] | None = None
+        proactive_row: dict[str, Any] = {}
+
+        if self.mentalist_scorer is not None:
+            proactive = build_mentalist_features_v7(frame)
+            proactive_current = proactive.loc[[tx_id]]
+            proactive_row = proactive.loc[tx_id].to_dict()
+            mentalist_state = self.mentalist_scorer.score_batch(
+                proactive_current,
+                np.asarray([float(decision["baseline_risk"])], dtype=float),
+            )
+            routed = apply_runtime_policy(
+                v5_actions=np.asarray([v5_action], dtype=object),
+                v5_risk=np.asarray([float(decision["linkrisk_risk"])], dtype=float),
+                baseline_risk=np.asarray([float(decision["baseline_risk"])], dtype=float),
+                mentalist_state=mentalist_state,
+                policy=self.mentalist_scorer.policy,
+            )
+
+            clue_values = mentalist_state.clue_frame.iloc[0].to_dict()
+            clue_families = {
+                family: bool(int(clue_values.get(f"clue_{family}", 0)))
+                for family in MENTALIST_FAMILIES
+            }
+            final_action = str(routed.actions[0])
+            routing_reason = str(routed.reasons[0])
+            mentalist_payload = {
+                "score": float(mentalist_state.jane_scores[0]),
+                "score_threshold": float(self.mentalist_scorer.policy.jane_score_threshold),
+                "clue_count": int(mentalist_state.clue_count[0]),
+                "min_clue_families": int(self.mentalist_scorer.policy.min_clue_families),
+                "clue_families": clue_families,
+                "below_baseline_review_boundary": bool(
+                    float(decision["baseline_risk"])
+                    < self.mentalist_scorer.policy.baseline_review_threshold
+                ),
+                "promoted_by_jane": bool(routed.promoted_by_jane[0]),
+                "displaced_v5_verify": bool(routed.displaced_v5_verify[0]),
+                "uses_confirmed_fraud_as_input": False,
+            }
+            decision["action"] = final_action
+            decision["routing_reason"] = routing_reason
+            decision["policy_version"] = self.mentalist_scorer.policy.version
+
+        feedback_row = feedback.loc[tx_id].to_dict()
+        case_file = self._build_case_file(
+            decision=decision,
+            mentalist=mentalist_payload,
+            feedback=feedback_row,
+        )
         network = self._build_network_snapshot(frame, tx_id)
         record = {
             "transaction_id": tx_id,
@@ -210,14 +293,58 @@ class LiveLinkRiskEngine:
             "input": event,
             "raw": dict(current_row),
             "decision": decision,
+            "mentalist": mentalist_payload,
+            "case_file": case_file,
             "relationship_features": relationship.loc[tx_id].to_dict(),
-            "feedback_features": feedback.loc[tx_id].to_dict(),
+            "proactive_features": proactive_row,
+            "feedback_features": feedback_row,
             "network": network,
         }
 
         self._rows.append(dict(current_row))
         self._records[tx_id] = record
         return record
+
+    def _build_case_file(
+        self,
+        *,
+        decision: Mapping[str, Any],
+        mentalist: Mapping[str, Any] | None,
+        feedback: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        fraud_channels = max(int(round(_numeric(feedback, "confirmed_fraud_channels"))), 0)
+        history_channels = max(int(round(_numeric(feedback, "feedback_history_channels"))), 0)
+        trusted_fraud = fraud_channels > 0
+        v5_action = str(decision.get("v5_action", decision["action"]))
+        final_action = str(decision["action"])
+        reason = str(decision.get("routing_reason", "V5_ONLY"))
+
+        explanations = {
+            "MENTALIST_PROACTIVE": (
+                "Corroborating present-tense behavioral evidence formed a stronger investigation case; "
+                "no confirmed-fraud relationship was required by Mentalist."
+            ),
+            "V5_VERIFY_DISPLACED_BY_RUNTIME_BOUNDARY": (
+                "The existing v0.5 VERIFY case fell below the frozen weak-investigation boundary, "
+                "so scarce verification capacity is not reserved for it."
+            ),
+            "V5_REVIEW": "The frozen v0.5 hard-review decision is immutable.",
+            "V5_VERIFY_RETAINED": "The existing v0.5 VERIFY decision remains above the frozen displacement boundary.",
+            "V5_ALLOW": "Neither the frozen v0.5 policy nor Mentalist produced enough evidence to intervene.",
+            "V5_ONLY": "Mentalist is not enabled in this runtime; the frozen v0.5 decision is unchanged.",
+        }
+
+        return {
+            "v5_action": v5_action,
+            "final_action": final_action,
+            "action_changed": v5_action != final_action,
+            "routing_reason": reason,
+            "explanation": explanations.get(reason, "The frozen runtime policy preserved the current action."),
+            "trusted_history_channels": history_channels,
+            "trusted_fraud_channels": fraud_channels,
+            "trusted_fraud_evidence_present": trusted_fraud,
+            "mentalist": dict(mentalist) if mentalist is not None else None,
+        }
 
     def adjudicate(self, transaction_id: str, outcome: str) -> None:
         if transaction_id not in self._records:
@@ -270,6 +397,7 @@ class LiveLinkRiskEngine:
         for tx_id in self.transaction_ids:
             record = self._records[tx_id]
             decision = record["decision"]
+            mentalist = record.get("mentalist") or {}
             status = self.adjudication_status(tx_id)
             event: LiveTransactionInput = record["input"]
             rows.append(
@@ -280,8 +408,10 @@ class LiveLinkRiskEngine:
                     "Profile": event.payment_profile,
                     "Device": event.device_info,
                     "Baseline": float(decision["baseline_risk"]),
-                    "LinkRisk": float(decision["linkrisk_risk"]),
-                    "Confidence": float(decision["graph_confidence"]),
+                    "v0.5 Risk": float(decision["linkrisk_risk"]),
+                    "Jane": float(mentalist["score"]) if mentalist else np.nan,
+                    "Clues": int(mentalist["clue_count"]) if mentalist else 0,
+                    "v0.5 Action": decision.get("v5_action", decision["action"]),
                     "Action": decision["action"],
                     "Outcome": format_adjudication_status(status),
                 }
