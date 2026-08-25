@@ -1,52 +1,60 @@
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 import sys
 
+import networkx as nx
+import plotly.graph_objects as go
 import streamlit as st
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from linkrisk.decision import (
-    REVIEW_THRESHOLD,
-    VERIFY_THRESHOLD,
-    score_transaction,
+from linkrisk.engine import FrozenChampionScorer
+from linkrisk.live_engine import (
+    LABEL_DELAY_SECONDS,
+    LiveLinkRiskEngine,
+    LiveTransactionInput,
+    format_sim_time,
 )
-from linkrisk.demo import demo_scenarios, evaluate_scenario, relationship_figure
 
 
 st.set_page_config(
-    page_title="LinkRisk | AI Risk Intelligence",
-    page_icon="LR",
+    page_title="LinkRisk | Live Fraud Risk Engine",
+    page_icon="🔗",
     layout="wide",
 )
 
 st.markdown(
     """
     <style>
-    .stApp { background: #07111f; color: #e5edf7; }
-    [data-testid="stSidebar"] { background: #0b1728; }
-    .block-container { padding-top: 1.5rem; max-width: 1500px; }
-    .eyebrow { color:#7dd3fc; font-size:.78rem; letter-spacing:.14em; text-transform:uppercase; font-weight:700; }
-    .hero-title { font-size:2.45rem; font-weight:800; line-height:1.05; margin:.25rem 0 .45rem; }
-    .hero-sub { color:#9fb0c5; font-size:1.03rem; max-width:850px; }
-    .decision { border-radius:18px; padding:1rem 1.2rem; font-weight:800; font-size:1.35rem; text-align:center; letter-spacing:.08em; }
+    .stApp { background:#07111f; color:#e5edf7; }
+    [data-testid="stSidebar"] { background:#0b1728; }
+    .block-container { padding-top:1.35rem; max-width:1500px; }
+    .eyebrow { color:#7dd3fc; font-size:.76rem; letter-spacing:.14em; text-transform:uppercase; font-weight:800; }
+    .hero { font-size:2.4rem; line-height:1.05; font-weight:850; margin:.2rem 0 .35rem; }
+    .sub { color:#9fb0c5; max-width:920px; font-size:1rem; margin-bottom:1.15rem; }
+    .panel { background:#0d1b2e; border:1px solid #1d3048; border-radius:16px; padding:1rem 1.05rem; }
+    .muted { color:#93a4b8; font-size:.87rem; }
+    .live-dot { display:inline-block; width:9px; height:9px; background:#4ade80; border-radius:50%; margin-right:.4rem; box-shadow:0 0 12px #4ade80; }
+    .decision { border-radius:14px; padding:.88rem 1rem; text-align:center; font-size:1.2rem; font-weight:850; letter-spacing:.09em; }
     .ALLOW { background:#0f2f27; color:#86efac; border:1px solid #1f6a50; }
     .VERIFY { background:#33280e; color:#fde68a; border:1px solid #806414; }
     .REVIEW { background:#3a1620; color:#fda4af; border:1px solid #8b2c43; }
-    .evidence-high { border-left:3px solid #fb7185; padding:.5rem .75rem; margin:.55rem 0; background:#1e1722; border-radius:0 10px 10px 0; }
-    .evidence-medium { border-left:3px solid #fbbf24; padding:.5rem .75rem; margin:.55rem 0; background:#211d14; border-radius:0 10px 10px 0; }
-    .evidence-info { border-left:3px solid #38bdf8; padding:.5rem .75rem; margin:.55rem 0; background:#101d2b; border-radius:0 10px 10px 0; }
-    .score-label { color:#9fb0c5; font-size:.82rem; margin-bottom:.15rem; }
-    .score-value { font-size:1.75rem; font-weight:800; }
-    div[data-testid="stMetric"] { background:#0d1b2e; border:1px solid #1d3048; padding:.75rem; border-radius:14px; }
+    .evidence-high { border-left:3px solid #fb7185; padding:.55rem .75rem; margin:.55rem 0; background:#1e1722; border-radius:0 10px 10px 0; }
+    .evidence-medium { border-left:3px solid #fbbf24; padding:.55rem .75rem; margin:.55rem 0; background:#211d14; border-radius:0 10px 10px 0; }
+    .evidence-info { border-left:3px solid #38bdf8; padding:.55rem .75rem; margin:.55rem 0; background:#101d2b; border-radius:0 10px 10px 0; }
+    div[data-testid="stMetric"] { background:#0d1b2e; border:1px solid #1d3048; padding:.72rem; border-radius:14px; }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+@st.cache_resource(show_spinner=False)
+def load_scorer() -> FrozenChampionScorer:
+    return FrozenChampionScorer.from_artifacts(ROOT)
 
 
 def load_policy_snapshot() -> dict | None:
@@ -59,178 +67,339 @@ def load_policy_snapshot() -> dict | None:
         return None
 
 
-def pct(value: float) -> str:
-    return f"{100 * float(value):.2f}%"
+def relationship_network_figure(network: dict) -> go.Figure:
+    graph = nx.Graph()
+    node_meta = {node["id"]: node for node in network.get("nodes", [])}
+    for node_id, meta in node_meta.items():
+        graph.add_node(node_id, **meta)
+    for edge in network.get("edges", []):
+        graph.add_edge(edge["source"], edge["target"])
+
+    if len(graph) == 1:
+        only = next(iter(graph.nodes))
+        positions = {only: (0.0, 0.0)}
+    elif len(graph) > 1:
+        positions = nx.spring_layout(graph, seed=17, k=1.35)
+    else:
+        positions = {}
+
+    figure = go.Figure()
+    for source, target in graph.edges:
+        x0, y0 = positions[source]
+        x1, y1 = positions[target]
+        figure.add_trace(
+            go.Scatter(
+                x=[x0, x1],
+                y=[y0, y1],
+                mode="lines",
+                line=dict(color="rgba(148,163,184,.35)", width=2),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    palette = {
+        "current": "#67e8f9",
+        "relation": "#a78bfa",
+        "fraud": "#fb7185",
+        "legitimate": "#4ade80",
+        "pending": "#fbbf24",
+        "prior": "#94a3b8",
+    }
+    size = {
+        "current": 33,
+        "relation": 25,
+        "fraud": 28,
+        "legitimate": 25,
+        "pending": 25,
+        "prior": 23,
+    }
+
+    for kind in palette:
+        ids = [node_id for node_id, meta in node_meta.items() if meta["kind"] == kind]
+        if not ids:
+            continue
+        figure.add_trace(
+            go.Scatter(
+                x=[positions[node_id][0] for node_id in ids],
+                y=[positions[node_id][1] for node_id in ids],
+                mode="markers+text",
+                text=[node_meta[node_id]["label"] for node_id in ids],
+                textposition="bottom center",
+                marker=dict(
+                    size=[size[kind]] * len(ids),
+                    color=palette[kind],
+                    line=dict(width=2, color="#07111f"),
+                ),
+                customdata=[node_meta[node_id]["detail"] for node_id in ids],
+                hovertemplate="%{text}<br>%{customdata}<extra></extra>",
+                showlegend=False,
+            )
+        )
+
+    figure.update_layout(
+        height=430,
+        margin=dict(l=5, r=5, t=5, b=5),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        font=dict(color="#e2e8f0"),
+    )
+    return figure
 
 
-def render_score(label: str, value: float | None) -> None:
-    if value is None:
-        st.markdown(f'<div class="score-label">{label}</div><div class="score-value">N/A</div>', unsafe_allow_html=True)
-        return
+def render_decision(record: dict) -> None:
+    decision = record["decision"]
+    scores = st.columns(4)
+    scores[0].metric("Transaction ML", f"{decision['baseline_risk']:.3f}")
+    scores[1].metric("Relationship specialist", f"{decision['specialist_risk']:.3f}")
+    scores[2].metric("Evidence confidence", f"{decision['graph_confidence']:.3f}")
+    scores[3].metric("Final LinkRisk", f"{decision['linkrisk_risk']:.3f}")
+
     st.markdown(
-        f'<div class="score-label">{label}</div><div class="score-value">{value:.3f}</div>',
+        f'<div class="decision {decision["action"]}">{decision["action"]}</div>',
         unsafe_allow_html=True,
     )
-    st.progress(min(max(float(value), 0.0), 1.0))
+
+    if decision["model_path"] == "baseline_fallback":
+        st.caption("Relationship confidence is zero, so the final score is the transaction-only baseline exactly.")
+    else:
+        st.caption("The frozen v0.5 confidence gate blended transaction risk with delayed relationship evidence.")
 
 
-def render_decision(decision, graph_kind: str, takeaway: str) -> None:
-    score_cols = st.columns(4)
-    with score_cols[0]:
-        render_score("Transaction ML risk", decision.baseline_risk)
-    with score_cols[1]:
-        render_score("Relationship specialist", decision.specialist_risk)
-    with score_cols[2]:
-        render_score("Graph confidence", decision.graph_confidence)
-    with score_cols[3]:
-        render_score("Final LinkRisk risk", decision.linkrisk_risk)
-
-    left, right = st.columns([0.92, 1.08], gap="large")
-    with left:
-        st.markdown("### Decision")
+def render_evidence(record: dict) -> None:
+    st.subheader("Why LinkRisk made this decision")
+    for item in record["decision"]["evidence"]:
+        level = item.get("level", "info")
         st.markdown(
-            f'<div class="decision {decision.action.value}">{decision.action.value}</div>',
+            f'<div class="evidence-{level}"><b>{item["code"]}</b><br>{item["message"]}</div>',
             unsafe_allow_html=True,
         )
-        st.caption(
-            f"Model path: `{decision.model_path}` · VERIFY ≥ {VERIFY_THRESHOLD:.3f} · REVIEW ≥ {REVIEW_THRESHOLD:.3f}"
-        )
-
-        st.markdown("### Why LinkRisk decided this")
-        for item in decision.evidence:
-            level = item.level if item.level in {"high", "medium", "info"} else "info"
-            st.markdown(
-                f'<div class="evidence-{level}"><strong>{item.code}</strong><br>{item.message}</div>',
-                unsafe_allow_html=True,
-            )
-
-        st.info(takeaway)
-
-    with right:
-        st.markdown("### Local relationship view")
-        st.plotly_chart(relationship_figure(graph_kind), use_container_width=True, config={"displayModeBar": False})
-        st.caption(
-            "This visualization is explanatory. LinkRisk uses causal streaming relationship histories rather than a GNN or a global graph database."
-        )
 
 
-def render_validation_snapshot(snapshot: dict | None) -> None:
-    st.markdown("### Frozen validation snapshot")
-    if not snapshot:
-        st.warning(
-            "Local policy validation artifact not found. Run `python scripts/evaluate_policy_impact.py` to populate real validation metrics."
-        )
+def render_performance() -> None:
+    snapshot = load_policy_snapshot()
+    st.subheader("Frozen validation evidence")
+    st.caption("This page reports the offline development/validation evidence supporting the live engine. It is not the engine itself.")
+    if snapshot is None:
+        st.info("Run scripts/evaluate_policy_impact.py locally to populate the frozen validation snapshot.")
         return
 
-    review = snapshot.get("review_metrics", {})
-    actions = {row["action"]: row for row in snapshot.get("actions", [])}
+    metrics = snapshot.get("review_metrics", {})
+    cols = st.columns(4)
+    cols[0].metric("REVIEW precision", f"{100 * metrics.get('precision', 0):.2f}%")
+    cols[1].metric("REVIEW recall", f"{100 * metrics.get('recall', 0):.2f}%")
+    cols[2].metric("PR-AUC", f"{metrics.get('pr_auc', 0):.4f}")
+    cols[3].metric("REVIEW FPR", f"{100 * metrics.get('false_positive_rate', 0):.2f}%")
 
-    metrics = st.columns(4)
-    metrics[0].metric("REVIEW precision", pct(review.get("precision", 0.0)))
-    metrics[1].metric("REVIEW recall", pct(review.get("recall", 0.0)))
-    metrics[2].metric("PR-AUC", f"{review.get('pr_auc', 0.0):.4f}")
-    metrics[3].metric("REVIEW FPR", pct(review.get("false_positive_rate", 0.0)))
+    actions = snapshot.get("actions", [])
+    if actions:
+        st.markdown("#### Frozen policy distribution")
+        st.dataframe(
+            [
+                {
+                    "Action": row["action"],
+                    "Traffic share": f"{100 * row['row_share']:.2f}%",
+                    "Fraud rate": f"{100 * row['fraud_rate']:.2f}%",
+                    "Rows": row["rows"],
+                }
+                for row in actions
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
 
-    action_cols = st.columns(3)
-    for col, name in zip(action_cols, ["ALLOW", "VERIFY", "REVIEW"]):
-        row = actions.get(name, {})
-        col.metric(name, pct(row.get("row_share", 0.0)), f"fraud rate {pct(row.get('fraud_rate', 0.0))}")
-
-    st.caption("Development validation only. The held-out chronological test period remains sealed.")
+    st.warning("Held-out test remains sealed. The live console does not access test labels.")
 
 
-st.markdown('<div class="eyebrow">Razorpay AI Buildathon · Track 2</div>', unsafe_allow_html=True)
-st.markdown('<div class="hero-title">LinkRisk</div>', unsafe_allow_html=True)
+st.markdown('<div class="eyebrow"><span class="live-dot"></span>Live risk operations</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero">LinkRisk</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="hero-sub">Confidence-aware payment risk intelligence that turns delayed fraud confirmations into relationship memory — and falls back safely to transaction ML when that evidence is weak.</div>',
+    '<div class="sub">Submit payments, adjudicate outcomes, advance simulated time, and watch delayed fraud confirmations become relationship memory for future transactions.</div>',
     unsafe_allow_html=True,
 )
 
-snapshot = load_policy_snapshot()
-render_validation_snapshot(snapshot)
-st.divider()
+try:
+    scorer = load_scorer()
+except Exception as exc:
+    st.error(
+        "The frozen model artifacts could not be loaded. Ensure baseline_preprocessor.joblib, "
+        "baseline_xgboost.joblib, feedback_specialist_v5.joblib and baseline_features.json exist locally."
+    )
+    st.exception(exc)
+    st.stop()
 
-scenarios = demo_scenarios()
-scenario_by_title = {scenario.title: scenario for scenario in scenarios}
+if "live_engine" not in st.session_state:
+    st.session_state.live_engine = LiveLinkRiskEngine(scorer)
+if "selected_transaction" not in st.session_state:
+    st.session_state.selected_transaction = None
+
+engine: LiveLinkRiskEngine = st.session_state.live_engine
 
 with st.sidebar:
-    st.markdown("## Demo controls")
-    mode = st.radio("Mode", ["Guided scenarios", "Policy sandbox"], index=0)
-    st.caption("Guided scenarios are illustrative inputs passed through the real frozen decision policy. They are not claimed as held-out dataset examples.")
+    st.markdown("### Simulation clock")
+    st.markdown(f"**{format_sim_time(engine.clock)}**")
+    st.caption("Fraud/legitimate adjudications can enter relationship memory only after the frozen 72-hour delay.")
 
-if mode == "Guided scenarios":
-    selected_title = st.sidebar.selectbox("Choose a story", list(scenario_by_title), index=4)
-    scenario = scenario_by_title[selected_title]
+    c1, c2 = st.columns(2)
+    if c1.button("+1 hour", use_container_width=True):
+        engine.advance_time(60 * 60)
+        st.rerun()
+    if c2.button("+24 hours", use_container_width=True):
+        engine.advance_time(24 * 60 * 60)
+        st.rerun()
+    if st.button("+72 hours", use_container_width=True):
+        engine.advance_time(LABEL_DELAY_SECONDS)
+        st.rerun()
 
-    st.markdown(f"## {scenario.title}")
-    st.write(scenario.subtitle)
-    render_decision(evaluate_scenario(scenario), scenario.graph_kind, scenario.takeaway)
+    st.divider()
+    auto_advance = st.checkbox("Auto-advance 5 min after scoring", value=True)
+    if st.button("Reset live session", use_container_width=True):
+        engine.reset()
+        st.session_state.selected_transaction = None
+        st.rerun()
 
-else:
-    st.markdown("## Policy sandbox")
-    st.write("Change the evidence and see how the frozen LinkRisk decision contract behaves. This is a policy simulator, not model retraining.")
+    st.divider()
+    st.caption("Use the same Profile, Device, Receiver domain or Browser values on later payments to create real session relationships. Unseen categorical values are handled by the frozen model adapter.")
 
-    control_a, control_b, control_c = st.columns(3)
-    with control_a:
-        baseline = st.slider("Transaction ML risk", 0.0, 1.0, 0.45, 0.01)
-    with control_b:
-        specialist = st.slider("Relationship specialist risk", 0.0, 1.0, 0.72, 0.01)
-    with control_c:
-        confidence = st.slider("Graph confidence", 0.0, 1.0, 0.65, 0.01)
+live_tab, performance_tab = st.tabs(["Live Engine", "Performance & Validation"])
 
-    evidence_a, evidence_b, evidence_c = st.columns(3)
-    with evidence_a:
-        strong_link = st.checkbox("Strong matured fraud link", value=True)
-    with evidence_b:
-        channels = st.slider("Confirmed-fraud channels", 0, 4, 1)
-    with evidence_c:
-        recent_profile = st.checkbox("Recent profile fraud memory", value=False)
+with live_tab:
+    st.markdown("### 1 · Submit an incoming payment")
+    st.caption("The form is a model-compatible runtime adapter. Repeated identifiers create the same relationship keys used by the validated LinkRisk pipeline.")
 
-    feedback = {
-        "any_strong_confirmed_fraud": float(strong_link),
-        "confirmed_fraud_channels": float(channels),
-        "profile_has_confirmed_fraud": float(channels > 0),
-        "device_has_confirmed_fraud": float(strong_link),
-        "log_profile_confirmed_fraud_30d": math.log1p(1) if recent_profile else 0.0,
-        "max_confirmed_fraud_rate": 0.50 if channels > 0 else 0.0,
-        "feedback_total_support_log": math.log1p(6) if channels > 0 else math.log1p(12),
-    }
+    with st.form("payment_form", clear_on_submit=False):
+        top = st.columns(3)
+        amount = top[0].number_input("Amount", min_value=0.0, value=2500.0, step=100.0)
+        payment_profile = top[1].text_input("Payment profile", value="PROFILE-A", help="Stable demo fingerprint mapped into the masked card/address profile used by v0.5.")
+        device_info = top[2].text_input("Device signature", value="Windows")
 
-    specialist_input = specialist if confidence > 0 else None
-    decision = score_transaction(
-        baseline_risk=baseline,
-        specialist_risk=specialist_input,
-        graph_confidence=confidence,
-        feedback=feedback,
-        transaction_id="SANDBOX-TX",
-    )
+        bottom = st.columns(3)
+        receiver_domain = bottom[0].text_input("Receiver email-domain context", value="gmail.com")
+        browser_context = bottom[1].text_input("Browser/device context", value="chrome 63.0")
+        product_code = bottom[2].selectbox("Product code", ["W", "C", "H", "R", "S"], index=0)
 
-    if confidence == 0:
-        graph_kind = "cold_start"
-    elif channels >= 2:
-        graph_kind = "coordinated"
-    elif strong_link:
-        graph_kind = "strong_link"
+        advanced = st.expander("Additional transaction attributes")
+        with advanced:
+            a1, a2, a3, a4 = st.columns(4)
+            payer_domain = a1.text_input("Payer email domain", value="gmail.com")
+            device_type = a2.selectbox("Device type", ["desktop", "mobile"], index=0)
+            card_network = a3.selectbox("Card network", ["visa", "mastercard", "american express", "discover"], index=0)
+            card_type = a4.selectbox("Card type", ["debit", "credit"], index=0)
+
+        submitted = st.form_submit_button("Run LinkRisk", type="primary", use_container_width=True)
+
+    if submitted:
+        event = LiveTransactionInput(
+            amount=amount,
+            payment_profile=payment_profile,
+            device_info=device_info,
+            receiver_domain=receiver_domain,
+            browser_context=browser_context,
+            product_code=product_code,
+            payer_domain=payer_domain,
+            device_type=device_type,
+            card_network=card_network,
+            card_type=card_type,
+        )
+        try:
+            record = engine.score_event(event)
+            st.session_state.selected_transaction = record["transaction_id"]
+            if auto_advance:
+                engine.advance_time(5 * 60)
+            st.rerun()
+        except Exception as exc:
+            st.exception(exc)
+
+    st.divider()
+    st.markdown("### 2 · Live transaction feed")
+    feed = engine.feed()
+    if feed.empty:
+        st.info("No payments yet. Submit the first transaction above. It should start with no matured relationship memory and therefore exercise the exact baseline fallback.")
     else:
-        graph_kind = "contextual"
+        st.dataframe(
+            feed.iloc[::-1],
+            use_container_width=True,
+            hide_index=True,
+        )
 
-    render_decision(
-        decision,
-        graph_kind,
-        "The sandbox uses the same frozen gate, thresholds and evidence rules as the runtime decision contract.",
-    )
+        transaction_ids = engine.transaction_ids
+        default_id = st.session_state.selected_transaction or transaction_ids[-1]
+        default_index = transaction_ids.index(default_id) if default_id in transaction_ids else len(transaction_ids) - 1
+        selected = st.selectbox(
+            "Investigate transaction",
+            transaction_ids,
+            index=default_index,
+        )
+        st.session_state.selected_transaction = selected
+        record = engine.get_record(selected)
 
-st.divider()
-with st.expander("How the final system works"):
+        st.divider()
+        st.markdown(f"### 3 · Transaction investigator — {selected}")
+        left, right = st.columns([1.05, 1.35])
+
+        with left:
+            render_decision(record)
+            render_evidence(record)
+
+            st.markdown("#### Adjudication / feedback")
+            status = record["adjudication"]
+            if status["state"] == "unadjudicated":
+                st.caption("No confirmed outcome is known yet. This transaction cannot influence fraud feedback memory.")
+            elif status["state"] == "pending":
+                hours = status["seconds_remaining"] / 3600.0
+                st.warning(f"{status['outcome'].title()} outcome recorded. Feedback becomes usable in {hours:.1f} hours.")
+            else:
+                st.success(f"{status['outcome'].title()} outcome is matured and eligible for future relationship memory.")
+
+            b1, b2, b3 = st.columns(3)
+            if b1.button("Confirm fraud", key=f"fraud-{selected}", use_container_width=True):
+                engine.adjudicate(selected, "fraud")
+                st.rerun()
+            if b2.button("Confirm legitimate", key=f"legit-{selected}", use_container_width=True):
+                engine.adjudicate(selected, "legitimate")
+                st.rerun()
+            if b3.button("Clear", key=f"clear-{selected}", use_container_width=True):
+                engine.clear_adjudication(selected)
+                st.rerun()
+
+        with right:
+            st.markdown("#### Relationship neighborhood at decision time")
+            network = record["network"]
+            if not network.get("edges"):
+                st.caption("No strictly earlier session transaction shared a validated relationship key. Same-timestamp rows are intentionally excluded from one another.")
+            st.plotly_chart(
+                relationship_network_figure(network),
+                use_container_width=True,
+                config={"displayModeBar": False},
+            )
+            st.caption("Cyan = current payment · purple = relationship view · red = matured fraud · green = matured legitimate · amber = recorded but not matured · gray = prior/unadjudicated.")
+
+        with st.expander("Technical state used by the frozen specialist"):
+            relationship_nonzero = {
+                key: value
+                for key, value in record["relationship_features"].items()
+                if abs(float(value)) > 1e-12
+            }
+            feedback_nonzero = {
+                key: value
+                for key, value in record["feedback_features"].items()
+                if abs(float(value)) > 1e-12
+            }
+            t1, t2 = st.columns(2)
+            with t1:
+                st.markdown("**Causal relationship features**")
+                st.json(relationship_nonzero or {"state": "No prior relationship signal"})
+            with t2:
+                st.markdown("**Delayed feedback features**")
+                st.json(feedback_nonzero or {"state": "No matured feedback signal"})
+
+    st.divider()
+    st.markdown("#### Suggested first walkthrough")
     st.markdown(
-        """
-        **1. Transaction ML** scores the current payment using the frozen XGBoost baseline.  
-        **2. Relationship memory** summarizes strictly prior, matured historical evidence.  
-        **3. The v0.5 specialist** scores transaction + relationship + delayed-feedback features.  
-        **4. Confidence gating** controls how strongly the specialist can move the baseline score.  
-        **5. Policy** maps the final risk to ALLOW, VERIFY or REVIEW.  
-        **6. Deterministic evidence** explains the decision without putting an LLM in the decision path.
-
-        Scores are **risk/ranking scores, not calibrated fraud probabilities**. Confirmed-fraud feedback uses a **simulated fixed 72-hour adjudication delay** in the development experiment.
-        """
+        "Submit `PROFILE-A / Windows`, mark that transaction **Confirmed fraud**, advance the clock by **72 hours**, then submit another payment with the same profile/device. The second payment is scored from the frozen model plus the now-matured relationship memory. Change the identifiers afterward to see the evidence disappear."
     )
+
+with performance_tab:
+    render_performance()
