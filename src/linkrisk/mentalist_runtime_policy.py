@@ -29,6 +29,7 @@ class MentalistRuntimePolicy:
     version: str
     min_clue_families: int
     jane_score_threshold: float
+    baseline_review_threshold: float
     v5_verify_displacement_threshold: float
     validation_intervention_target: float
 
@@ -41,6 +42,7 @@ class MentalistRuntimePolicy:
             version=str(payload["version"]),
             min_clue_families=int(payload["min_clue_families"]),
             jane_score_threshold=float(payload["jane_score_threshold"]),
+            baseline_review_threshold=float(payload["baseline_review_threshold"]),
             v5_verify_displacement_threshold=float(
                 payload["v5_verify_displacement_threshold"]
             ),
@@ -54,6 +56,7 @@ class MentalistRuntimePolicy:
             raise ValueError("min_clue_families must be >= 1")
         for name, value in (
             ("jane_score_threshold", self.jane_score_threshold),
+            ("baseline_review_threshold", self.baseline_review_threshold),
             (
                 "v5_verify_displacement_threshold",
                 self.v5_verify_displacement_threshold,
@@ -64,6 +67,8 @@ class MentalistRuntimePolicy:
                 raise ValueError(f"{name} must be finite")
         if not 0.0 <= self.jane_score_threshold <= 1.0:
             raise ValueError("jane_score_threshold must lie in [0, 1]")
+        if not 0.0 <= self.baseline_review_threshold <= 1.0:
+            raise ValueError("baseline_review_threshold must lie in [0, 1]")
         if not 0.0 <= self.v5_verify_displacement_threshold <= 1.0:
             raise ValueError(
                 "v5_verify_displacement_threshold must lie in [0, 1]"
@@ -146,23 +151,25 @@ def apply_runtime_policy(
     *,
     v5_actions: np.ndarray,
     v5_risk: np.ndarray,
+    baseline_risk: np.ndarray,
     mentalist_state: MentalistState,
     policy: MentalistRuntimePolicy,
 ) -> RuntimeRoutingResult:
     """Apply the frozen v1.0 decision boundaries independently per row.
 
-    This function is deliberately label-free and future-traffic-free. It converts
-    the successful batch allocation into a deployable threshold contract. The
-    subsequent validation reproduction script must prove that these boundaries
-    reproduce v1.0 before the held-out test can be opened.
+    Jane eligibility deliberately mirrors the successful v0.8/v1.0 experiments:
+    the transaction-only baseline must be below its frozen REVIEW threshold,
+    even if trusted relationship evidence later changes the full v0.5 action.
+    No labels or future traffic are consumed here.
     """
     policy.validate()
     actions_in = np.asarray(v5_actions, dtype=object)
     risk = np.asarray(v5_risk, dtype=float)
+    baseline = np.asarray(baseline_risk, dtype=float)
     jane = np.asarray(mentalist_state.jane_scores, dtype=float)
     clues = np.asarray(mentalist_state.clue_count, dtype=int)
     n = len(actions_in)
-    if any(len(array) != n for array in (risk, jane, clues)):
+    if any(len(array) != n for array in (risk, baseline, jane, clues)):
         raise ValueError("All runtime routing arrays must have equal length")
 
     valid = np.isin(actions_in, ["ALLOW", "VERIFY", "REVIEW"])
@@ -172,9 +179,11 @@ def apply_runtime_policy(
     review = actions_in == "REVIEW"
     verify = actions_in == "VERIFY"
     allow = actions_in == "ALLOW"
+    below_baseline_review = baseline < policy.baseline_review_threshold
 
     promoted = (
         allow
+        & below_baseline_review
         & (clues >= policy.min_clue_families)
         & (jane >= policy.jane_score_threshold)
     )
