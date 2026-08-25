@@ -10,6 +10,9 @@ data/processed/
 *.parquet
 artifacts/models/*
 !artifacts/models/.gitkeep
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 .DS_Store
 Thumbs.db
 .vscode/
