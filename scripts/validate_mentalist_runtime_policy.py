@@ -60,9 +60,6 @@ def main() -> None:
     del sealed_test
     del data
 
-    with (RESULTS_DIR / "mentalist_v7_validation.json").open("r", encoding="utf-8") as handle:
-        v7 = json.load(handle)
-
     print("Building causal proactive and trusted-memory state across train -> validation...")
     development = pd.concat([train, validation], axis=0)
     proactive = build_mentalist_features_v7(development)
@@ -88,15 +85,17 @@ def main() -> None:
     runtime = apply_runtime_policy(
         v5_actions=v5_actions,
         v5_risk=v5_risk,
+        baseline_risk=baseline_risk,
         mentalist_state=state,
         policy=mentalist.policy,
     )
 
-    # Reconstruct the successful v1.0 batch allocation for an exact action-level
-    # comparison. This uses no labels to choose actions.
-    v5_review = v5_actions == "REVIEW"
+    # Reconstruct the successful v1.0 batch allocation exactly. The Mentalist
+    # candidate pool is defined against the frozen transaction-baseline REVIEW
+    # boundary, not the final v0.5 REVIEW mask.
+    baseline_review = baseline_risk >= mentalist.policy.baseline_review_threshold
     jane_eligible = (
-        (~v5_review)
+        (~baseline_review)
         & (state.clue_count >= mentalist.policy.min_clue_families)
     )
     jane_target_rows = int(round(len(validation) * JANE_RESERVATION))
@@ -126,15 +125,29 @@ def main() -> None:
     exact_reproduction = bool(mismatch_count == 0)
     passed = bool(exact_reproduction and review_immutable and same_capacity_as_batch)
 
+    # Boundary diagnostics remain label-free. If the gate still fails, they tell
+    # us whether the only remaining issue is a score tie at one of the cutoffs.
+    jane_at_boundary = (
+        (np.abs(state.jane_scores - mentalist.policy.jane_score_threshold) <= 1e-12)
+        & jane_eligible
+    )
+    displacement_at_boundary = (
+        (np.abs(v5_risk - mentalist.policy.v5_verify_displacement_threshold) <= 1e-12)
+        & (v5_actions == "VERIFY")
+    )
+
     print("\n=== Mentalist Runtime Reproduction Check ===")
     print(f"Held-out test rows: {sealed_rows:,} (deleted before evaluation)")
     print(f"Jane fixed threshold:              {mentalist.policy.jane_score_threshold:.15f}")
+    print(f"Baseline REVIEW threshold:         {mentalist.policy.baseline_review_threshold:.15f}")
     print(f"v0.5 displacement threshold:      {mentalist.policy.v5_verify_displacement_threshold:.15f}")
     print(f"Runtime Jane promotions:           {int(runtime.promoted_by_jane.sum()):,}")
     print(f"Runtime v0.5 VERIFY displacements: {int(runtime.displaced_v5_verify.sum()):,}")
     print(f"Runtime intervention delta:        {runtime.intervention_delta:+d}")
     print(f"Action agreement vs v1.0 batch:    {100*action_agreement:.6f}%")
     print(f"Action mismatches:                 {mismatch_count:,}")
+    print(f"Jane candidates exactly at cutoff: {int(jane_at_boundary.sum()):,}")
+    print(f"VERIFY cases exactly at cutoff:    {int(displacement_at_boundary.sum()):,}")
 
     print("\nStable v0.5")
     print(f"  intervention: {100*stable_metrics['intervention_share']:.2f}%")
@@ -163,6 +176,7 @@ def main() -> None:
         "held_out_test": {"status": "sealed", "rows": sealed_rows, "labels_used": False},
         "runtime_policy": {
             "jane_score_threshold": mentalist.policy.jane_score_threshold,
+            "baseline_review_threshold": mentalist.policy.baseline_review_threshold,
             "v5_verify_displacement_threshold": mentalist.policy.v5_verify_displacement_threshold,
             "min_clue_families": mentalist.policy.min_clue_families,
         },
@@ -170,6 +184,10 @@ def main() -> None:
             "jane_promotions": int(runtime.promoted_by_jane.sum()),
             "v5_verify_displacements": int(runtime.displaced_v5_verify.sum()),
             "intervention_delta": runtime.intervention_delta,
+        },
+        "boundary_diagnostics": {
+            "jane_candidates_exactly_at_cutoff": int(jane_at_boundary.sum()),
+            "v5_verify_exactly_at_displacement_cutoff": int(displacement_at_boundary.sum()),
         },
         "stable_v5": stable_metrics,
         "batch_v1": batch_metrics,
@@ -188,8 +206,8 @@ def main() -> None:
 
     if not passed:
         print(
-            "\nDo NOT open the held-out test. The fixed thresholds do not yet "
-            "reproduce the successful v1.0 allocation exactly."
+            "\nDo NOT open the held-out test. The fixed runtime contract still "
+            "does not reproduce the successful v1.0 allocation exactly."
         )
 
 
