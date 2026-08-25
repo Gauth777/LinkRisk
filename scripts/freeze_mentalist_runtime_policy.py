@@ -21,6 +21,7 @@ def _load(name: str) -> dict:
 
 
 def main() -> None:
+    baseline = _load("baseline_validation.json")
     v8 = _load("mentalist_v8_investigator_validation.json")
     v10 = _load("mentalist_v10_reallocation_validation.json")
 
@@ -46,20 +47,24 @@ def main() -> None:
     if displacement is None:
         raise RuntimeError("v1.0 did not record a displacement boundary")
 
+    baseline_review_threshold = float(baseline["metrics"]["threshold"])
     min_clues = int(v10["jane"]["min_clue_families"])
     payload = {
         "version": "mentalist_v1.0_runtime",
         "source_experiments": {
+            "baseline_review_cutoff": "baseline_validation",
             "jane_cutoff": "mentalist_v0.8_evidence_gated_investigator",
             "displacement_cutoff": "mentalist_v1.0_one_for_one_reallocation",
         },
         "min_clue_families": min_clues,
         "jane_score_threshold": jane_threshold,
+        "baseline_review_threshold": baseline_review_threshold,
         "v5_verify_displacement_threshold": float(displacement),
         "validation_intervention_target": VALIDATION_INTERVENTION_TARGET,
         "held_out_test_status": "sealed",
         "notes": [
             "Thresholds are operating boundaries, not calibrated fraud probabilities.",
+            "Jane eligibility preserves the frozen transaction-baseline REVIEW boundary used by v0.8/v1.0.",
             "v0.5 REVIEW remains immutable.",
             "Previous fraud remains evidence, not automatic guilt.",
             "Future traffic is not used by the runtime decision rule.",
@@ -70,6 +75,7 @@ def main() -> None:
     print("=== Mentalist v1.0 Runtime Policy Freeze ===")
     print(f"Minimum independent clue families: {min_clues}")
     print(f"Jane score threshold:              {jane_threshold:.15f}")
+    print(f"Baseline REVIEW threshold:         {baseline_review_threshold:.15f}")
     print(f"v0.5 VERIFY displacement boundary: {float(displacement):.15f}")
     print(f"Validation intervention target:    {100*VALIDATION_INTERVENTION_TARGET:.2f}%")
     print("Held-out test:                     SEALED")
