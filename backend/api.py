@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
+import json
 import math
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ import time
 from typing import Any
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +23,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from backend.model_assets import asset_status, ensure_model_assets
+from backend.razorpay_integration import (
+    MerchantTelemetry,
+    RazorpayIntegrationState,
+    SUPPORTED_PAYMENT_EVENTS,
+    fallback_event_id,
+    integration_metadata,
+    normalize_payment_to_live_input,
+    payment_entity_from_webhook,
+    verify_webhook_signature,
+)
 from linkrisk.engine import FrozenChampionScorer
 from linkrisk.live_engine import LiveLinkRiskEngine, LiveTransactionInput
 from linkrisk.mentalist_runtime_policy import FrozenMentalistScorer, MentalistRuntimePolicy
@@ -51,6 +62,15 @@ class TransactionRequest(BaseModel):
     device_type: str = "desktop"
     card_network: str = "visa"
     card_type: str = "debit"
+
+
+class TelemetryRequest(BaseModel):
+    reference_id: str = Field(min_length=1, max_length=160)
+    payment_profile: str = Field(min_length=1, max_length=120)
+    device_info: str = Field(min_length=1, max_length=160)
+    browser_context: str = Field(min_length=1, max_length=160)
+    receiver_domain: str = Field(default="merchant.local", min_length=1, max_length=160)
+    device_type: str = Field(default="unknown", min_length=1, max_length=40)
 
 
 class AdjudicationRequest(BaseModel):
@@ -97,6 +117,7 @@ class EngineService:
 
 
 service = EngineService()
+razorpay_state = RazorpayIntegrationState()
 app = FastAPI(
     title="LinkRisk API",
     version="1.0.0",
@@ -153,6 +174,10 @@ def _record_payload(engine: LiveLinkRiskEngine, transaction_id: str) -> dict[str
     return _jsonable(record)
 
 
+def _razorpay_secret() -> str:
+    return os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     status = asset_status(ROOT)
@@ -163,6 +188,7 @@ def health() -> dict[str, Any]:
         "asset_status": status,
         "last_error": service.last_error,
         "held_out_test": "sealed",
+        "razorpay_webhook_configured": bool(_razorpay_secret()),
     }
 
 
@@ -206,6 +232,126 @@ def policy() -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@app.get("/api/integrations/razorpay/status")
+def razorpay_status() -> dict[str, Any]:
+    return {
+        "configured": bool(_razorpay_secret()),
+        "supported_events": sorted(SUPPORTED_PAYMENT_EVENTS),
+        "webhook_path": "/api/webhooks/razorpay",
+        "telemetry_path": "/api/integrations/razorpay/telemetry",
+        "state": razorpay_state.status(),
+        "payer_ip_from_razorpay_used": False,
+    }
+
+
+@app.post("/api/integrations/razorpay/telemetry", status_code=201)
+def register_razorpay_telemetry(request: TelemetryRequest) -> dict[str, Any]:
+    telemetry = MerchantTelemetry(**request.model_dump())
+    razorpay_state.register_telemetry(telemetry)
+    return {
+        "ok": True,
+        "reference_id": telemetry.reference_id,
+        "message": "Merchant telemetry registered for Razorpay enrichment.",
+    }
+
+
+@app.post("/api/webhooks/razorpay")
+async def razorpay_webhook(request: Request) -> dict[str, Any]:
+    """Verify, deduplicate and score Razorpay payment webhooks.
+
+    Signature verification is performed over the exact raw request body before
+    JSON parsing. payment.authorized/payment.captured for the same payment are
+    payment-deduplicated so an out-of-order second event does not create a second
+    LinkRisk transaction.
+    """
+    secret = _razorpay_secret()
+    if not secret:
+        raise HTTPException(
+            status_code=503,
+            detail="RAZORPAY_WEBHOOK_SECRET is not configured.",
+        )
+
+    raw_body = await request.body()
+    signature = request.headers.get("x-razorpay-signature", "")
+    if not verify_webhook_signature(raw_body, signature, secret):
+        raise HTTPException(status_code=401, detail="Invalid Razorpay webhook signature.")
+
+    event_id = request.headers.get("x-razorpay-event-id", "").strip() or fallback_event_id(raw_body)
+    if not razorpay_state.claim_event(event_id):
+        return {"ok": True, "duplicate": True, "event_id": event_id}
+
+    try:
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Webhook body is not valid JSON.") from exc
+
+        event_type = str(payload.get("event") or "").strip()
+        if event_type not in SUPPORTED_PAYMENT_EVENTS:
+            razorpay_state.complete_event(event_id)
+            return {
+                "ok": True,
+                "ignored": True,
+                "event_id": event_id,
+                "event_type": event_type,
+            }
+
+        try:
+            payment = payment_entity_from_webhook(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        payment_id = str(payment["id"])
+        existing_transaction_id = razorpay_state.transaction_for_payment(payment_id)
+        if existing_transaction_id is not None:
+            engine = _engine_or_503()
+            razorpay_state.complete_event(event_id)
+            return {
+                "ok": True,
+                "duplicate_payment": True,
+                "event_id": event_id,
+                "event_type": event_type,
+                "transaction": _record_payload(engine, existing_transaction_id),
+            }
+
+        telemetry = razorpay_state.telemetry_for_payment(payment)
+        try:
+            live_input = normalize_payment_to_live_input(payment, telemetry)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        engine = _engine_or_503()
+        # Arrival time is the causal availability time of the webhook. Never move
+        # an explicitly advanced simulation clock backwards.
+        engine.clock = max(float(engine.clock), time.time())
+        transaction_id = f"RZP-{payment_id}"
+        record = engine.score_event(live_input, transaction_id=transaction_id)
+        record["integration"] = integration_metadata(
+            event_type=event_type,
+            event_id=event_id,
+            payment=payment,
+            telemetry=telemetry,
+        )
+        razorpay_state.bind_payment(payment_id, transaction_id)
+        razorpay_state.complete_event(event_id)
+        return {
+            "ok": True,
+            "duplicate": False,
+            "event_id": event_id,
+            "event_type": event_type,
+            "transaction": _jsonable(record),
+        }
+    except HTTPException:
+        razorpay_state.release_event(event_id)
+        raise
+    except Exception as exc:
+        razorpay_state.release_event(event_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Razorpay event processing failed: {type(exc).__name__}: {exc}",
+        ) from exc
+
+
 @app.get("/api/transactions")
 def transactions() -> dict[str, Any]:
     engine = service.maybe()
@@ -232,6 +378,7 @@ def transactions() -> dict[str, Any]:
                 "action": decision["action"],
                 "routing_reason": decision.get("routing_reason", "V5_ONLY"),
                 "adjudication": engine.adjudication_status(tx_id),
+                "integration_source": (record.get("integration") or {}).get("source"),
             }
         )
     return {"items": _jsonable(items), "clock": float(engine.clock)}
@@ -293,6 +440,7 @@ def advance_time(request: AdvanceTimeRequest) -> dict[str, Any]:
 @app.post("/api/session/reset")
 def reset_session() -> dict[str, Any]:
     service.reset()
+    razorpay_state.reset()
     engine = service.maybe()
     return {"ok": True, "clock": float(engine.clock) if engine is not None else time.time()}
 
