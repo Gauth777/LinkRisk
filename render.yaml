@@ -12,3 +12,5 @@ services:
         sync: false
       - key: LINKRISK_CORS_ORIGINS
         value: https://linkrisk.onrender.com
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
