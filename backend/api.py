@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 from threading import Lock
+import time
 from typing import Any
 
 import numpy as np
@@ -79,6 +80,7 @@ class EngineService:
                 self._engine = LiveLinkRiskEngine(
                     champion,
                     mentalist_scorer=mentalist,
+                    start_time=time.time(),
                 )
                 self.last_error = None
             except Exception as exc:  # surfaced to /api/health and 503 responses
@@ -91,7 +93,7 @@ class EngineService:
 
     def reset(self) -> None:
         if self._engine is not None:
-            self._engine.reset()
+            self._engine.reset(start_time=time.time())
 
 
 service = EngineService()
@@ -238,6 +240,13 @@ def transactions() -> dict[str, Any]:
 @app.post("/api/transactions", status_code=201)
 def create_transaction(request: TransactionRequest) -> dict[str, Any]:
     engine = _engine_or_503()
+
+    # The API is a live/manual simulator. Keep its causal clock aligned with
+    # actual arrival time so sequential payments become visible as prior history.
+    # If the operator has explicitly advanced simulation time (for example 72h
+    # to mature adjudication), never move that simulated clock backwards.
+    engine.clock = max(float(engine.clock), time.time())
+
     event = LiveTransactionInput(**request.model_dump())
     record = engine.score_event(event)
     return _jsonable(record)
@@ -284,7 +293,8 @@ def advance_time(request: AdvanceTimeRequest) -> dict[str, Any]:
 @app.post("/api/session/reset")
 def reset_session() -> dict[str, Any]:
     service.reset()
-    return {"ok": True, "clock": 0.0}
+    engine = service.maybe()
+    return {"ok": True, "clock": float(engine.clock) if engine is not None else time.time()}
 
 
 # In production the Vite build is copied into frontend/dist by Docker. During
