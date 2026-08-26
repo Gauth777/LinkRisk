@@ -31,11 +31,11 @@ The per-transaction runtime contract reproduced the successful v1.0 validation a
 ```text
 Merchant telemetry ─┐
                     ├─→ FastAPI → LiveLinkRiskEngine
-Razorpay webhook ───┘               │
-                                    ├── transaction baseline
-React/Vite product UI ←─────────────┤── causal relationship state
-                                    ├── delayed trusted feedback
-                                    ├── Mentalist proactive features
+Razorpay payment ────┘               │
+     │                              ├── transaction baseline
+     ├─ Checkout callback ──────────┤── causal relationship state
+     └─ signed webhook ─────────────┤── delayed trusted feedback
+React/Vite product UI ←─────────────┤── Mentalist proactive features
                                     └── frozen v1.0 router
                                              ↓
                                   ALLOW / VERIFY / REVIEW
@@ -66,18 +66,56 @@ Open the Vite URL (normally `http://localhost:5173`). Vite proxies `/api` to Fas
 
 If the frozen model artifacts are present locally, **New payment** runs the real engine. If they are absent, the UI still opens in clearly-labelled **Preview data** mode so the presentation layer can be reviewed without pretending the model is running.
 
+## Razorpay Test Mode Checkout
+
+The buildathon checkout path intentionally accepts **Test Mode keys only**. Put the credentials in a local `.env` or shell environment; `.env` is git-ignored.
+
+```text
+RAZORPAY_KEY_ID=rzp_test_...
+RAZORPAY_KEY_SECRET=...
+RAZORPAY_WEBHOOK_SECRET=...
+```
+
+Never expose `RAZORPAY_KEY_SECRET` or `RAZORPAY_WEBHOOK_SECRET` to the browser or repository. The Test Key ID is returned to Checkout because Razorpay requires it client-side.
+
+The existing **New payment** flow now performs:
+
+```text
+merchant telemetry form
+      ↓
+POST /api/integrations/razorpay/orders
+      ↓
+server creates immutable Razorpay Test Order
+      ↓
+Razorpay Standard Checkout
+      ↓
+POST /api/integrations/razorpay/payments/verify
+      ↓
+server verifies payment signature
+      ↓
+server fetches authoritative Payment entity
+      ↓
+order + amount + currency cross-check
+      ↓
+LinkRisk scoring → ALLOW / VERIFY / REVIEW
+```
+
+This callback-verification path works during local development even though Razorpay cannot deliver a webhook to `localhost`. Once deployed, the webhook remains the durable retry/event path and payment-id deduplication prevents the same payment from being scored twice.
+
+Checkout status:
+
+```text
+GET /api/integrations/razorpay/checkout/status
+```
+
+The original direct model simulator remains available programmatically at `POST /api/transactions` for engineering tests.
+
 ## Razorpay webhook integration
 
 LinkRisk accepts signed Razorpay payment webhooks at:
 
 ```text
 POST /api/webhooks/razorpay
-```
-
-Configure a webhook secret before enabling the endpoint:
-
-```text
-RAZORPAY_WEBHOOK_SECRET=<the secret configured in Razorpay Dashboard>
 ```
 
 The endpoint:
@@ -97,23 +135,10 @@ GET /api/integrations/razorpay/status
 
 ### Merchant telemetry enrichment
 
-Razorpay's standard Payment entity does not provide the browser/device/session context used by LinkRisk's proactive relationship logic. Register merchant-observed telemetry against a Razorpay **order id** (preferred) or payment id before the webhook arrives:
+Razorpay's standard Payment entity does not provide the browser/device/session context used by LinkRisk's proactive relationship logic. The checkout route automatically registers merchant-observed telemetry against the server-created Razorpay order id. Telemetry can also be registered explicitly at:
 
 ```text
 POST /api/integrations/razorpay/telemetry
-```
-
-Example JSON:
-
-```json
-{
-  "reference_id": "order_example123",
-  "payment_profile": "merchant-customer-42",
-  "device_info": "Chrome / Windows",
-  "browser_context": "session-device-42",
-  "receiver_domain": "merchant.example",
-  "device_type": "desktop"
-}
 ```
 
 If telemetry is absent, LinkRisk uses payment-unique unknown device/browser contexts. It intentionally does **not** collapse missing telemetry into a shared fake device, because that could manufacture coordination evidence.
@@ -143,6 +168,8 @@ For cloud deployment, package the frozen runtime files above into a ZIP preservi
 ```text
 LINKRISK_MODEL_BUNDLE_URL=<https URL to frozen ZIP>
 LINKRISK_MODEL_BUNDLE_SHA256=<recommended SHA-256>
+RAZORPAY_KEY_ID=<rzp_test_... during buildathon testing>
+RAZORPAY_KEY_SECRET=<Test Mode key secret>
 RAZORPAY_WEBHOOK_SECRET=<Razorpay webhook secret>
 ```
 
@@ -157,12 +184,12 @@ pytest -q
 cd frontend && npm run build
 ```
 
-CI runs both checks on the product branch.
+CI runs both checks on `main` and the buildathon feature branches.
 
 ## Dataset
 The current trained model is calibrated to IEEE-CIS-compatible attributes. Raw competition data is not committed. Put `train_transaction.csv` and `train_identity.csv` under `data/raw/` only for local experiment reproduction.
 
-The live product uses a deterministic demo adapter to map human-readable simulator inputs into the masked IEEE-compatible fields expected by the frozen model. This is not a claim that masked IEEE fields are literal customer identities.
+The live product uses a deterministic demo adapter to map human-readable simulator/merchant inputs into the masked IEEE-compatible fields expected by the frozen model. This is not a claim that masked IEEE fields are literal customer identities.
 
 ## Safety / evaluation guardrails
 - Same-timestamp transactions cannot see one another.
