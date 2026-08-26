@@ -7,7 +7,6 @@ on:
       - main
       - buildathon-product-ui
       - mentalist-live-engine
-      - demo-scenarios-ui
   pull_request:
 
 jobs:
