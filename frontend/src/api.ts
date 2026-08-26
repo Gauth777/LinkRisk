@@ -18,12 +18,40 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+export type RazorpayCheckoutOrder = {
+  key_id: string
+  order_id: string
+  amount: number
+  currency: string
+  name: string
+  description: string
+  prefill: {
+    name: string
+    email: string
+    contact: string
+  }
+  test_mode: boolean
+}
+
+export type RazorpaySuccess = {
+  razorpay_payment_id: string
+  razorpay_order_id: string
+  razorpay_signature: string
+}
+
 export const api = {
   health: () => request<{ ok: boolean; engine_loaded: boolean; asset_status: { ready: boolean; missing: string[] }; held_out_test: string }>('/api/health'),
   overview: () => request<OverviewPayload>('/api/overview'),
   transactions: () => request<{ items: FeedItem[]; clock: number }>('/api/transactions'),
   transaction: (id: string) => request<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}`),
   createTransaction: (payload: Record<string, unknown>) => request<CaseRecord>('/api/transactions', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  razorpayCheckoutStatus: () => request<{ configured: boolean; test_mode: boolean; key_id: string | null; secret_exposed: false }>('/api/integrations/razorpay/checkout/status'),
+  createRazorpayOrder: (payload: Record<string, unknown>) => request<RazorpayCheckoutOrder>('/api/integrations/razorpay/orders', {
+    method: 'POST', body: JSON.stringify(payload),
+  }),
+  verifyRazorpayPayment: (payload: RazorpaySuccess) => request<{ verified: boolean; duplicate_payment: boolean; transaction: CaseRecord }>('/api/integrations/razorpay/payments/verify', {
     method: 'POST', body: JSON.stringify(payload),
   }),
   adjudicate: (id: string, outcome: 'fraud' | 'legitimate') => request<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}/adjudicate`, {
