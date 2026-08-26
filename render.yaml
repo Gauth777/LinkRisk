@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: linkrisk
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: LINKRISK_MODEL_BUNDLE_URL
+        sync: false
+      - key: LINKRISK_MODEL_BUNDLE_SHA256
+        sync: false
+      - key: LINKRISK_CORS_ORIGINS
+        value: https://linkrisk.onrender.com
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false

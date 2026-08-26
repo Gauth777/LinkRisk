@@ -1,0 +1,19 @@
+{
+  "version": "mentalist_v1.0_runtime",
+  "source_experiments": {
+    "jane_cutoff": "mentalist_v0.8_evidence_gated_investigator",
+    "displacement_cutoff": "mentalist_v1.0_one_for_one_reallocation"
+  },
+  "min_clue_families": 2,
+  "jane_score_threshold": 0.67634242773056,
+  "baseline_review_threshold": 0.849796831607819,
+  "v5_verify_displacement_threshold": 0.123508884221637,
+  "validation_intervention_target": 0.06,
+  "held_out_test_status": "sealed",
+  "notes": [
+    "Frozen after exact 100% action reproduction on development validation.",
+    "Thresholds are operating boundaries, not calibrated fraud probabilities.",
+    "v0.5 REVIEW remains immutable.",
+    "Previous fraud remains evidence, not automatic guilt."
+  ]
+}
