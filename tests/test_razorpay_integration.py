@@ -4,11 +4,13 @@ import hashlib
 import hmac
 
 from backend.razorpay_integration import (
+    CheckoutOrder,
     MerchantTelemetry,
     RazorpayIntegrationState,
     fallback_event_id,
     normalize_payment_to_live_input,
     payment_entity_from_webhook,
+    verify_payment_signature,
     verify_webhook_signature,
 )
 
@@ -35,6 +37,21 @@ def test_webhook_signature_uses_exact_raw_body() -> None:
     assert verify_webhook_signature(raw, signature, secret)
     assert not verify_webhook_signature(raw + b" ", signature, secret)
     assert not verify_webhook_signature(raw, "bad-signature", secret)
+
+
+def test_checkout_payment_signature_uses_server_order_id() -> None:
+    order_id = "order_demo"
+    payment_id = "pay_demo"
+    secret = "test-key-secret"
+    signature = hmac.new(
+        secret.encode(),
+        f"{order_id}|{payment_id}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    assert verify_payment_signature(order_id, payment_id, signature, secret)
+    assert not verify_payment_signature("order_other", payment_id, signature, secret)
+    assert not verify_payment_signature(order_id, "pay_other", signature, secret)
 
 
 def test_missing_event_id_fallback_is_deterministic() -> None:
@@ -71,6 +88,7 @@ def test_registered_order_telemetry_enriches_payment() -> None:
         browser_context="session-device-42",
         receiver_domain="merchant.example",
         device_type="desktop",
+        product_code="R",
     )
     state.register_telemetry(telemetry)
 
@@ -83,10 +101,16 @@ def test_registered_order_telemetry_enriches_payment() -> None:
     assert event.device_info == "Chrome / Windows"
     assert event.browser_context == "session-device-42"
     assert event.receiver_domain == "merchant.example"
+    assert event.product_code == "R"
 
 
-def test_event_and_payment_idempotency_state() -> None:
+def test_checkout_order_and_idempotency_state() -> None:
     state = RazorpayIntegrationState()
+    order = CheckoutOrder(order_id="order_demo", amount_subunits=125000, currency="INR")
+    state.register_checkout_order(order)
+
+    assert state.checkout_order("order_demo") == order
+    assert state.checkout_order("order_missing") is None
 
     assert state.claim_event("evt_1")
     assert not state.claim_event("evt_1")
@@ -97,5 +121,6 @@ def test_event_and_payment_idempotency_state() -> None:
     assert state.transaction_for_payment("pay_demo") == "RZP-pay_demo"
 
     status = state.status()
+    assert status["checkout_orders"] == 1
     assert status["processed_events"] == 1
     assert status["payments_scored"] == 1
