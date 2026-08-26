@@ -39,12 +39,28 @@ export type RazorpaySuccess = {
   razorpay_signature: string
 }
 
+async function createRazorpayBackedTransaction(payload: Record<string, unknown>): Promise<CaseRecord> {
+  const order = await request<RazorpayCheckoutOrder>('/api/integrations/razorpay/orders', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  const { openRazorpayCheckout } = await import('./razorpay')
+  const checkoutResult = await openRazorpayCheckout(order)
+  const verified = await request<{ verified: boolean; duplicate_payment: boolean; transaction: CaseRecord }>('/api/integrations/razorpay/payments/verify', {
+    method: 'POST',
+    body: JSON.stringify(checkoutResult),
+  })
+  if (!verified.verified) throw new Error('Razorpay payment verification did not complete.')
+  return verified.transaction
+}
+
 export const api = {
   health: () => request<{ ok: boolean; engine_loaded: boolean; asset_status: { ready: boolean; missing: string[] }; held_out_test: string }>('/api/health'),
   overview: () => request<OverviewPayload>('/api/overview'),
   transactions: () => request<{ items: FeedItem[]; clock: number }>('/api/transactions'),
   transaction: (id: string) => request<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}`),
-  createTransaction: (payload: Record<string, unknown>) => request<CaseRecord>('/api/transactions', {
+  createTransaction: createRazorpayBackedTransaction,
+  createSimulatorTransaction: (payload: Record<string, unknown>) => request<CaseRecord>('/api/transactions', {
     method: 'POST', body: JSON.stringify(payload),
   }),
   razorpayCheckoutStatus: () => request<{ configured: boolean; test_mode: boolean; key_id: string | null; secret_exposed: false }>('/api/integrations/razorpay/checkout/status'),
