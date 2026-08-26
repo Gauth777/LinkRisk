@@ -1,4 +1,4 @@
-"""Razorpay Test/Live webhook ingestion helpers for LinkRisk.
+"""Razorpay Test/Live integration helpers for LinkRisk.
 
 The integration deliberately separates Razorpay payment fields from merchant-side
 telemetry. Razorpay does not provide payer browser/device telemetry in the
@@ -14,10 +14,17 @@ import hmac
 from threading import Lock
 from typing import Any, Mapping
 
+import requests
+
 from linkrisk.live_engine import LiveTransactionInput
 
 
+RAZORPAY_API_BASE = "https://api.razorpay.com/v1"
 SUPPORTED_PAYMENT_EVENTS = frozenset({"payment.authorized", "payment.captured"})
+
+
+class RazorpayAPIError(RuntimeError):
+    """Sanitised Razorpay API failure safe to surface to the demo UI."""
 
 
 @dataclass(frozen=True)
@@ -34,14 +41,23 @@ class MerchantTelemetry:
     browser_context: str
     receiver_domain: str = "merchant.local"
     device_type: str = "unknown"
+    product_code: str = "W"
+
+
+@dataclass(frozen=True)
+class CheckoutOrder:
+    order_id: str
+    amount_subunits: int
+    currency: str
 
 
 class RazorpayIntegrationState:
-    """Small in-memory idempotency + telemetry store for the demo runtime."""
+    """Small in-memory checkout/idempotency/telemetry store for the demo runtime."""
 
     def __init__(self) -> None:
         self._lock = Lock()
         self._telemetry: dict[str, MerchantTelemetry] = {}
+        self._checkout_orders: dict[str, CheckoutOrder] = {}
         self._claimed_events: set[str] = set()
         self._processed_events: set[str] = set()
         self._payment_to_transaction: dict[str, str] = {}
@@ -49,6 +65,7 @@ class RazorpayIntegrationState:
     def reset(self) -> None:
         with self._lock:
             self._telemetry.clear()
+            self._checkout_orders.clear()
             self._claimed_events.clear()
             self._processed_events.clear()
             self._payment_to_transaction.clear()
@@ -56,6 +73,14 @@ class RazorpayIntegrationState:
     def register_telemetry(self, telemetry: MerchantTelemetry) -> None:
         with self._lock:
             self._telemetry[telemetry.reference_id] = telemetry
+
+    def register_checkout_order(self, order: CheckoutOrder) -> None:
+        with self._lock:
+            self._checkout_orders[order.order_id] = order
+
+    def checkout_order(self, order_id: str) -> CheckoutOrder | None:
+        with self._lock:
+            return self._checkout_orders.get(order_id)
 
     def telemetry_for_payment(self, payment: Mapping[str, Any]) -> MerchantTelemetry | None:
         payment_id = str(payment.get("id") or "")
@@ -95,10 +120,78 @@ class RazorpayIntegrationState:
     def status(self) -> dict[str, int]:
         with self._lock:
             return {
+                "checkout_orders": len(self._checkout_orders),
                 "telemetry_records": len(self._telemetry),
                 "processed_events": len(self._processed_events),
                 "payments_scored": len(self._payment_to_transaction),
             }
+
+
+def _response_json(response: requests.Response) -> Mapping[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _raise_for_razorpay(response: requests.Response, operation: str) -> None:
+    if response.ok:
+        return
+    payload = _response_json(response)
+    error = payload.get("error")
+    if isinstance(error, Mapping):
+        detail = str(error.get("description") or error.get("reason") or "")
+    else:
+        detail = ""
+    message = detail.strip() or f"HTTP {response.status_code}"
+    raise RazorpayAPIError(f"Razorpay {operation} failed: {message}")
+
+
+def create_razorpay_order(
+    *,
+    key_id: str,
+    key_secret: str,
+    amount_subunits: int,
+    currency: str,
+    receipt: str,
+) -> Mapping[str, Any]:
+    """Create an immutable Razorpay Order server-side."""
+    try:
+        response = requests.post(
+            f"{RAZORPAY_API_BASE}/orders",
+            auth=(key_id, key_secret),
+            json={
+                "amount": int(amount_subunits),
+                "currency": currency,
+                "receipt": receipt,
+            },
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise RazorpayAPIError(f"Razorpay order request failed: {type(exc).__name__}") from exc
+    _raise_for_razorpay(response, "order creation")
+    payload = _response_json(response)
+    if not str(payload.get("id") or "").startswith("order_"):
+        raise RazorpayAPIError("Razorpay order creation returned no valid order id")
+    return payload
+
+
+def fetch_razorpay_payment(*, key_id: str, key_secret: str, payment_id: str) -> Mapping[str, Any]:
+    """Fetch the authoritative Payment entity after Checkout callback verification."""
+    try:
+        response = requests.get(
+            f"{RAZORPAY_API_BASE}/payments/{payment_id}",
+            auth=(key_id, key_secret),
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        raise RazorpayAPIError(f"Razorpay payment lookup failed: {type(exc).__name__}") from exc
+    _raise_for_razorpay(response, "payment lookup")
+    payload = _response_json(response)
+    if str(payload.get("id") or "") != payment_id:
+        raise RazorpayAPIError("Razorpay payment lookup returned an unexpected payment id")
+    return payload
 
 
 def verify_webhook_signature(raw_body: bytes, signature: str, secret: str) -> bool:
@@ -106,6 +199,15 @@ def verify_webhook_signature(raw_body: bytes, signature: str, secret: str) -> bo
     if not signature or not secret:
         return False
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature.strip())
+
+
+def verify_payment_signature(order_id: str, payment_id: str, signature: str, key_secret: str) -> bool:
+    """Verify Standard Checkout success signature using the server-known order id."""
+    if not order_id or not payment_id or not signature or not key_secret:
+        return False
+    signed = f"{order_id}|{payment_id}".encode("utf-8")
+    expected = hmac.new(key_secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature.strip())
 
 
@@ -186,12 +288,14 @@ def normalize_payment_to_live_input(
         browser_context = f"unknown-browser:{payment_id}"
         receiver_domain = "merchant.local"
         device_type = "unknown"
+        product_code = "W"
     else:
         payment_profile = telemetry.payment_profile
         device_info = telemetry.device_info
         browser_context = telemetry.browser_context
         receiver_domain = telemetry.receiver_domain
         device_type = telemetry.device_type
+        product_code = telemetry.product_code
 
     return LiveTransactionInput(
         amount=amount,
@@ -199,7 +303,7 @@ def normalize_payment_to_live_input(
         device_info=device_info,
         receiver_domain=receiver_domain,
         browser_context=browser_context,
-        product_code="W",
+        product_code=product_code,
         payer_domain=_email_domain(payment.get("email")),
         device_type=device_type,
         card_network=network,
@@ -213,9 +317,10 @@ def integration_metadata(
     event_id: str,
     payment: Mapping[str, Any],
     telemetry: MerchantTelemetry | None,
+    source: str = "razorpay_webhook",
 ) -> dict[str, Any]:
     return {
-        "source": "razorpay_webhook",
+        "source": source,
         "event_type": event_type,
         "event_id": event_id,
         "payment_id": str(payment.get("id") or ""),
