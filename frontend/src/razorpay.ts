@@ -48,7 +48,8 @@ export function loadRazorpayCheckout(): Promise<void> {
 
 export async function openRazorpayCheckout(order: RazorpayCheckoutOrder): Promise<RazorpaySuccess> {
   await loadRazorpayCheckout()
-  if (!window.Razorpay) throw new Error('Razorpay Checkout is unavailable in this browser.')
+  const Razorpay = window.Razorpay
+  if (!Razorpay) throw new Error('Razorpay Checkout is unavailable in this browser.')
 
   return new Promise<RazorpaySuccess>((resolve, reject) => {
     let settled = false
@@ -58,7 +59,7 @@ export async function openRazorpayCheckout(order: RazorpayCheckoutOrder): Promis
       reject(new Error(message))
     }
 
-    const checkout = new window.Razorpay!({
+    const checkout = new Razorpay({
       key: order.key_id,
       amount: order.amount,
       currency: order.currency,
