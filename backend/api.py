@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from backend.model_assets import asset_status, ensure_model_assets
+from backend.razorpay_checkout import build_checkout_router
 from backend.razorpay_integration import (
     MerchantTelemetry,
     RazorpayIntegrationState,
@@ -71,6 +72,7 @@ class TelemetryRequest(BaseModel):
     browser_context: str = Field(min_length=1, max_length=160)
     receiver_domain: str = Field(default="merchant.local", min_length=1, max_length=160)
     device_type: str = Field(default="unknown", min_length=1, max_length=40)
+    product_code: str = Field(default="W", min_length=1, max_length=12)
 
 
 class AdjudicationRequest(BaseModel):
@@ -178,6 +180,15 @@ def _razorpay_secret() -> str:
     return os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
 
 
+app.include_router(
+    build_checkout_router(
+        state=razorpay_state,
+        engine_provider=_engine_or_503,
+        jsonable=_jsonable,
+    )
+)
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     status = asset_status(ROOT)
@@ -234,13 +245,20 @@ def policy() -> dict[str, Any]:
 
 @app.get("/api/integrations/razorpay/status")
 def razorpay_status() -> dict[str, Any]:
+    key_id = os.getenv("RAZORPAY_KEY_ID", "").strip()
+    key_secret = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
     return {
-        "configured": bool(_razorpay_secret()),
+        "configured": bool(key_id and key_secret),
+        "test_mode": key_id.startswith("rzp_test_"),
+        "webhook_configured": bool(_razorpay_secret()),
         "supported_events": sorted(SUPPORTED_PAYMENT_EVENTS),
+        "checkout_order_path": "/api/integrations/razorpay/orders",
+        "checkout_verify_path": "/api/integrations/razorpay/payments/verify",
         "webhook_path": "/api/webhooks/razorpay",
         "telemetry_path": "/api/integrations/razorpay/telemetry",
         "state": razorpay_state.status(),
         "payer_ip_from_razorpay_used": False,
+        "secret_exposed": False,
     }
 
 
