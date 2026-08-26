@@ -29,18 +29,16 @@ The per-transaction runtime contract reproduced the successful v1.0 validation a
 ## Architecture
 
 ```text
-React/Vite product UI
-        ↓
-FastAPI
-        ↓
-LiveLinkRiskEngine
-   ├── transaction baseline
-   ├── causal relationship state
-   ├── delayed trusted feedback
-   ├── Mentalist proactive features
-   └── frozen v1.0 router
-        ↓
-ALLOW / VERIFY / REVIEW + case file + graph
+Merchant telemetry ─┐
+                    ├─→ FastAPI → LiveLinkRiskEngine
+Razorpay webhook ───┘               │
+                                    ├── transaction baseline
+React/Vite product UI ←─────────────┤── causal relationship state
+                                    ├── delayed trusted feedback
+                                    ├── Mentalist proactive features
+                                    └── frozen v1.0 router
+                                             ↓
+                                  ALLOW / VERIFY / REVIEW
 ```
 
 `app.py` remains as a Streamlit engineering/debug console. The buildathon product surface is `frontend/` + `backend/api.py`.
@@ -68,6 +66,58 @@ Open the Vite URL (normally `http://localhost:5173`). Vite proxies `/api` to Fas
 
 If the frozen model artifacts are present locally, **New payment** runs the real engine. If they are absent, the UI still opens in clearly-labelled **Preview data** mode so the presentation layer can be reviewed without pretending the model is running.
 
+## Razorpay webhook integration
+
+LinkRisk accepts signed Razorpay payment webhooks at:
+
+```text
+POST /api/webhooks/razorpay
+```
+
+Configure a webhook secret before enabling the endpoint:
+
+```text
+RAZORPAY_WEBHOOK_SECRET=<the secret configured in Razorpay Dashboard>
+```
+
+The endpoint:
+
+- verifies `X-Razorpay-Signature` using HMAC-SHA256 over the **exact raw request body** before JSON parsing,
+- uses `x-razorpay-event-id` for event idempotency (with a body-hash fallback if the header is unexpectedly absent),
+- accepts `payment.authorized` and `payment.captured`,
+- deduplicates those events again by Razorpay payment id so one payment cannot create two LinkRisk transactions,
+- normalizes Razorpay amount/method/card/email fields into the current IEEE-CIS-compatible runtime adapter,
+- never claims or derives payer IP from the standard Razorpay Payment payload.
+
+Integration status is visible at:
+
+```text
+GET /api/integrations/razorpay/status
+```
+
+### Merchant telemetry enrichment
+
+Razorpay's standard Payment entity does not provide the browser/device/session context used by LinkRisk's proactive relationship logic. Register merchant-observed telemetry against a Razorpay **order id** (preferred) or payment id before the webhook arrives:
+
+```text
+POST /api/integrations/razorpay/telemetry
+```
+
+Example JSON:
+
+```json
+{
+  "reference_id": "order_example123",
+  "payment_profile": "merchant-customer-42",
+  "device_info": "Chrome / Windows",
+  "browser_context": "session-device-42",
+  "receiver_domain": "merchant.example",
+  "device_type": "desktop"
+}
+```
+
+If telemetry is absent, LinkRisk uses payment-unique unknown device/browser contexts. It intentionally does **not** collapse missing telemetry into a shared fake device, because that could manufacture coordination evidence.
+
 ## Frozen runtime assets
 Raw IEEE-CIS data and trained model binaries are intentionally not committed.
 
@@ -93,6 +143,7 @@ For cloud deployment, package the frozen runtime files above into a ZIP preservi
 ```text
 LINKRISK_MODEL_BUNDLE_URL=<https URL to frozen ZIP>
 LINKRISK_MODEL_BUNDLE_SHA256=<recommended SHA-256>
+RAZORPAY_WEBHOOK_SECRET=<Razorpay webhook secret>
 ```
 
 At startup, LinkRisk downloads the bundle only when local model assets are absent, optionally verifies its SHA-256, safely extracts it, and refuses scoring if required files are still missing.
