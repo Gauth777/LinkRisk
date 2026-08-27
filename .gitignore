@@ -13,6 +13,7 @@ artifacts/models/*
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+.linkrisk/
 .DS_Store
 Thumbs.db
 .vscode/
