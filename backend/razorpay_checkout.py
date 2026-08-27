@@ -73,6 +73,7 @@ def build_checkout_router(
     state: RazorpayIntegrationState,
     engine_provider: Callable[[], LiveLinkRiskEngine],
     jsonable: Callable[[Any], Any],
+    persist_transaction: Callable[[dict[str, Any]], None] | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -199,6 +200,8 @@ def build_checkout_router(
             payment=payment,
             telemetry=telemetry,
         )
+        if persist_transaction is not None:
+            persist_transaction(record)
         state.bind_payment(request.razorpay_payment_id, transaction_id)
 
         return {

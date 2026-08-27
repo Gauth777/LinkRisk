@@ -34,6 +34,7 @@ from backend.razorpay_integration import (
     payment_entity_from_webhook,
     verify_webhook_signature,
 )
+from backend.session_store import LocalSessionStore, SessionStoreError, default_session_path
 from linkrisk.engine import FrozenChampionScorer
 from linkrisk.live_engine import LiveLinkRiskEngine, LiveTransactionInput
 from linkrisk.mentalist_runtime_policy import FrozenMentalistScorer, MentalistRuntimePolicy
@@ -84,10 +85,17 @@ class AdvanceTimeRequest(BaseModel):
 
 
 class EngineService:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        session_store: LocalSessionStore,
+        integration_state: RazorpayIntegrationState,
+    ) -> None:
         self._engine: LiveLinkRiskEngine | None = None
         self._lock = Lock()
+        self.session_store = session_store
+        self.integration_state = integration_state
         self.last_error: str | None = None
+        self.replayed_transactions = 0
 
     def get(self) -> LiveLinkRiskEngine:
         if self._engine is not None:
@@ -99,13 +107,19 @@ class EngineService:
                 ensure_model_assets(ROOT)
                 champion = FrozenChampionScorer.from_artifacts(ROOT)
                 mentalist = FrozenMentalistScorer.from_artifacts(ROOT)
-                self._engine = LiveLinkRiskEngine(
+                engine = LiveLinkRiskEngine(
                     champion,
                     mentalist_scorer=mentalist,
                     start_time=time.time(),
                 )
+                self.replayed_transactions = self.session_store.replay(
+                    engine,
+                    self.integration_state,
+                )
+                self._engine = engine
                 self.last_error = None
             except Exception as exc:  # surfaced to /api/health and 503 responses
+                self._engine = None
                 self.last_error = f"{type(exc).__name__}: {exc}"
                 raise
             return self._engine
@@ -116,10 +130,12 @@ class EngineService:
     def reset(self) -> None:
         if self._engine is not None:
             self._engine.reset(start_time=time.time())
+        self.replayed_transactions = 0
 
 
-service = EngineService()
+session_store = LocalSessionStore(default_session_path(ROOT))
 razorpay_state = RazorpayIntegrationState()
+service = EngineService(session_store, razorpay_state)
 app = FastAPI(
     title="LinkRisk API",
     version="1.0.0",
@@ -157,6 +173,17 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _persistence_status() -> dict[str, Any]:
+    try:
+        return session_store.status()
+    except SessionStoreError as exc:
+        return {
+            "enabled": True,
+            "healthy": False,
+            "error": str(exc),
+        }
+
+
 def _engine_or_503() -> LiveLinkRiskEngine:
     try:
         return service.get()
@@ -164,9 +191,10 @@ def _engine_or_503() -> LiveLinkRiskEngine:
         raise HTTPException(
             status_code=503,
             detail={
-                "message": "Frozen model assets are unavailable.",
+                "message": "Frozen model assets or persisted session are unavailable.",
                 "error": f"{type(exc).__name__}: {exc}",
                 "asset_status": asset_status(ROOT),
+                "session_persistence": _persistence_status(),
             },
         ) from exc
 
@@ -180,11 +208,21 @@ def _razorpay_secret() -> str:
     return os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
 
 
+def _restore_if_persisted() -> LiveLinkRiskEngine | None:
+    engine = service.maybe()
+    if engine is not None:
+        return engine
+    if session_store.has_events():
+        return _engine_or_503()
+    return None
+
+
 app.include_router(
     build_checkout_router(
         state=razorpay_state,
         engine_provider=_engine_or_503,
         jsonable=_jsonable,
+        persist_transaction=session_store.append_transaction,
     )
 )
 
@@ -200,12 +238,14 @@ def health() -> dict[str, Any]:
         "last_error": service.last_error,
         "held_out_test": "sealed",
         "razorpay_webhook_configured": bool(_razorpay_secret()),
+        "session_persistence": _persistence_status(),
+        "replayed_transactions": service.replayed_transactions,
     }
 
 
 @app.get("/api/overview")
 def overview() -> dict[str, Any]:
-    engine = service.maybe()
+    engine = _restore_if_persisted()
     live = {
         "transactions": 0,
         "allow": 0,
@@ -350,6 +390,7 @@ async def razorpay_webhook(request: Request) -> dict[str, Any]:
             payment=payment,
             telemetry=telemetry,
         )
+        session_store.append_transaction(record)
         razorpay_state.bind_payment(payment_id, transaction_id)
         razorpay_state.complete_event(event_id)
         return {
@@ -372,7 +413,7 @@ async def razorpay_webhook(request: Request) -> dict[str, Any]:
 
 @app.get("/api/transactions")
 def transactions() -> dict[str, Any]:
-    engine = service.maybe()
+    engine = _restore_if_persisted()
     if engine is None:
         return {"items": [], "clock": 0.0}
     items = []
@@ -414,6 +455,7 @@ def create_transaction(request: TransactionRequest) -> dict[str, Any]:
 
     event = LiveTransactionInput(**request.model_dump())
     record = engine.score_event(event)
+    session_store.append_transaction(record)
     return _jsonable(record)
 
 
@@ -431,6 +473,12 @@ def adjudicate(transaction_id: str, request: AdjudicationRequest) -> dict[str, A
     engine = _engine_or_503()
     try:
         engine.adjudicate(transaction_id, request.outcome)
+        status = engine.adjudication_status(transaction_id)
+        session_store.append_adjudication(
+            transaction_id,
+            str(status["outcome"]),
+            float(engine.clock),
+        )
         return _record_payload(engine, transaction_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -443,6 +491,7 @@ def clear_adjudication(transaction_id: str) -> dict[str, Any]:
     engine = _engine_or_503()
     try:
         engine.clear_adjudication(transaction_id)
+        session_store.append_clear_adjudication(transaction_id)
         return _record_payload(engine, transaction_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -452,11 +501,16 @@ def clear_adjudication(transaction_id: str) -> dict[str, Any]:
 def advance_time(request: AdvanceTimeRequest) -> dict[str, Any]:
     engine = _engine_or_503()
     engine.advance_time(request.seconds)
+    session_store.append_clock(float(engine.clock))
     return {"clock": float(engine.clock)}
 
 
 @app.post("/api/session/reset")
 def reset_session() -> dict[str, Any]:
+    try:
+        session_store.clear()
+    except SessionStoreError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     service.reset()
     razorpay_state.reset()
     engine = service.maybe()
