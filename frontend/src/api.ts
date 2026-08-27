@@ -39,6 +39,13 @@ export type RazorpaySuccess = {
   razorpay_signature: string
 }
 
+// App.tsx refreshes the live feed immediately after a successful checkout.
+// React state updates are asynchronous, so that refresh can still ask for the
+// previously-selected transaction once. Preserve the authoritative record just
+// returned by Razorpay verification for that single follow-up read, preventing
+// the Investigation page from being overwritten with stale case details.
+let pendingCreatedRecord: CaseRecord | null = null
+
 async function createRazorpayBackedTransaction(payload: Record<string, unknown>): Promise<CaseRecord> {
   const order = await request<RazorpayCheckoutOrder>('/api/integrations/razorpay/orders', {
     method: 'POST',
@@ -51,14 +58,24 @@ async function createRazorpayBackedTransaction(payload: Record<string, unknown>)
     body: JSON.stringify(checkoutResult),
   })
   if (!verified.verified) throw new Error('Razorpay payment verification did not complete.')
+  pendingCreatedRecord = verified.transaction
   return verified.transaction
+}
+
+async function getTransaction(id: string): Promise<CaseRecord> {
+  if (pendingCreatedRecord) {
+    const record = pendingCreatedRecord
+    pendingCreatedRecord = null
+    return record
+  }
+  return request<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}`)
 }
 
 export const api = {
   health: () => request<{ ok: boolean; engine_loaded: boolean; asset_status: { ready: boolean; missing: string[] }; held_out_test: string }>('/api/health'),
   overview: () => request<OverviewPayload>('/api/overview'),
   transactions: () => request<{ items: FeedItem[]; clock: number }>('/api/transactions'),
-  transaction: (id: string) => request<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}`),
+  transaction: getTransaction,
   createTransaction: createRazorpayBackedTransaction,
   createSimulatorTransaction: (payload: Record<string, unknown>) => request<CaseRecord>('/api/transactions', {
     method: 'POST', body: JSON.stringify(payload),
