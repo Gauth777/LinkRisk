@@ -24,6 +24,7 @@ from linkrisk.baseline import (
     merge_transaction_identity,
 )
 from linkrisk.data import chronological_split
+from linkrisk.decision import REVIEW_THRESHOLD
 from linkrisk.engine import FrozenChampionScorer
 from linkrisk.feedback_features_v5 import build_feedback_features_v5
 from linkrisk.mentalist_features_v7 import build_mentalist_features_v7
@@ -132,6 +133,9 @@ def _transition_stats(
     promoted: np.ndarray,
     displaced: np.ndarray,
 ) -> dict[str, Any]:
+    v5_actions = np.asarray(v5_actions, dtype=object)
+    final_actions = np.asarray(final_actions, dtype=object)
+    review_mask = v5_actions == "REVIEW"
     return {
         "promoted_by_mentalist": {
             "rows": int(promoted.sum()),
@@ -144,16 +148,10 @@ def _transition_stats(
             "legitimate": int(((y == 0) & displaced).sum()),
         },
         "v5_review_unchanged": bool(
-            np.array_equal(
-                final_actions[np.asarray(v5_actions, dtype=object) == "REVIEW"],
-                np.asarray(v5_actions, dtype=object)[
-                    np.asarray(v5_actions, dtype=object) == "REVIEW"
-                ],
-            )
+            np.array_equal(final_actions[review_mask], v5_actions[review_mask])
         ),
         "intervention_delta_rows": int(
-            (np.asarray(final_actions, dtype=object) != "ALLOW").sum()
-            - (np.asarray(v5_actions, dtype=object) != "ALLOW").sum()
+            (final_actions != "ALLOW").sum() - (v5_actions != "ALLOW").sum()
         ),
     }
 
@@ -190,6 +188,7 @@ def preflight() -> int:
     print(f"  minimum clue families           : {policy.min_clue_families}")
     print(f"  Jane score threshold            : {policy.jane_score_threshold:.15f}")
     print(f"  baseline REVIEW threshold       : {policy.baseline_review_threshold:.15f}")
+    print(f"  v0.5 hard REVIEW threshold      : {REVIEW_THRESHOLD:.15f}")
     print(f"  v0.5 VERIFY displacement        : {policy.v5_verify_displacement_threshold:.15f}")
     print(f"  validation intervention target  : {policy.validation_intervention_target:.2%}")
     print(f"  champion baseline features      : {len(champion.baseline_features)}")
@@ -226,9 +225,8 @@ def execute_final() -> int:
     train, validation, test = chronological_split(merged)
     del merged
 
-    # Extract the sealed outcomes once, then remove them from the frame used to
-    # construct every feature and prediction. They are referenced again only
-    # after all frozen predictions/actions have been produced.
+    # Extract sealed outcomes once, then remove them from the frame used by all
+    # prediction features. They are referenced again only after predictions are frozen.
     test_ids = test[ID_COL].to_numpy(copy=True)
     y_test = test[TARGET].astype(np.int8).to_numpy(copy=True)
     test_index = test.index.copy()
@@ -309,28 +307,15 @@ def execute_final() -> int:
     v5_review_detector = evaluate_scores(
         y_test,
         v5_risk,
-        # v0.5 REVIEW is exactly the REVIEW action boundary embodied by the
-        # frozen champion. Derive it from actual frozen REVIEW scores without
-        # choosing anything from test labels.
-        float(min(v5_risk[v5_actions == "REVIEW"]))
-        if bool((v5_actions == "REVIEW").any())
-        else 1.0,
+        REVIEW_THRESHOLD,
     )
-    # The threshold field above is descriptive only. For exact hard-review
-    # confusion counts, overwrite prediction metrics from the frozen actions.
-    v5_review_actions = np.where(v5_actions == "REVIEW", "REVIEW", "ALLOW")
-    v5_review_operational = _action_metrics(v5_review_actions, y_test)
-    for key in (
-        "precision",
-        "recall",
-        "false_positive_rate",
-        "true_positives",
-        "false_positives",
-        "true_negatives",
-        "false_negatives",
-    ):
-        v5_review_detector[key] = v5_review_operational[key]
-    v5_review_detector["threshold"] = "frozen_v0.5_review_policy"
+
+    # Verify exact agreement between the explicit frozen threshold and the
+    # champion's hard REVIEW actions; any mismatch indicates an implementation defect.
+    threshold_review = v5_risk >= REVIEW_THRESHOLD
+    action_review = v5_actions == "REVIEW"
+    if not bool(np.array_equal(threshold_review, action_review)):
+        raise AssertionError("v0.5 REVIEW action disagrees with frozen REVIEW threshold")
 
     stable_v5 = _action_metrics(v5_actions, y_test)
     final_linkrisk = _action_metrics(final_actions, y_test)
@@ -366,7 +351,7 @@ def execute_final() -> int:
             "final_policy_is_scalar_probability": False,
             "note": (
                 "v0.5 supplies a continuous risk score; Mentalist changes action routing only. "
-                "Therefore PR-AUC is reported for the baseline and v0.5 risk layers, while the final "
+                "PR-AUC is therefore reported for baseline and v0.5 risk layers; the final "
                 "LinkRisk router is evaluated by operational precision/recall/FPR/intervention metrics."
             ),
         },
@@ -378,7 +363,10 @@ def execute_final() -> int:
             "test_fraud_rate": float(y_test.mean()),
             "test_label_digest_sha256": _label_digest(test_ids, y_test),
         },
-        "frozen_policy": asdict(policy),
+        "frozen_policy": {
+            **asdict(policy),
+            "v5_hard_review_threshold": REVIEW_THRESHOLD,
+        },
         "baseline_hard_detector": baseline_detector,
         "v5_hard_review_detector": v5_review_detector,
         "stable_v5_operational_policy": stable_v5,
@@ -442,10 +430,14 @@ def execute_final() -> int:
     )
 
     print("\nMentalist routing")
-    print(f"  promoted : {transitions['promoted_by_mentalist']['rows']:,} rows, "
-          f"{transitions['promoted_by_mentalist']['frauds']:,} frauds")
-    print(f"  displaced: {transitions['displaced_v5_verify']['rows']:,} rows, "
-          f"{transitions['displaced_v5_verify']['frauds']:,} frauds")
+    print(
+        f"  promoted : {transitions['promoted_by_mentalist']['rows']:,} rows, "
+        f"{transitions['promoted_by_mentalist']['frauds']:,} frauds"
+    )
+    print(
+        f"  displaced: {transitions['displaced_v5_verify']['rows']:,} rows, "
+        f"{transitions['displaced_v5_verify']['frauds']:,} frauds"
+    )
     print(f"  intervention delta: {transitions['intervention_delta_rows']:+,} rows")
     print(f"  REVIEW immutable: {'YES' if transitions['v5_review_unchanged'] else 'NO'}")
 
