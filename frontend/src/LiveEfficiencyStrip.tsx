@@ -62,7 +62,7 @@ export default function LiveEfficiencyStrip() {
   const tokens = capacity?.total_tokens ?? 6
   const burst = capacity?.total_burst ?? 6
 
-  return <div style={{
+  return <div className="live-efficiency-strip" style={{
     position: 'fixed',
     zIndex: 35,
     left: '50%',
