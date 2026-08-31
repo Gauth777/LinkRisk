@@ -1,22 +1,22 @@
 .runtime-card b,
 .runtime-card span,
 .sealed-pill span {
-  font-size: 0;
+  font-size: 0 !important;
 }
 
 .runtime-card b::after {
   content: 'Selective v2 runtime';
-  font-size: 0.82rem;
+  font-size: 0.82rem !important;
 }
 
 .runtime-card span::after {
   content: 'v1 final evaluated · v2 development';
-  font-size: 0.7rem;
+  font-size: 0.7rem !important;
 }
 
 .sealed-pill span::after {
   content: 'v1 final evaluated once';
-  font-size: 0.78rem;
+  font-size: 0.78rem !important;
 }
 
 @media (max-width: 1100px) {
