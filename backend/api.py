@@ -37,6 +37,7 @@ from backend.razorpay_integration import (
 from backend.session_store import LocalSessionStore, SessionStoreError, default_session_path
 from linkrisk.engine import FrozenChampionScorer
 from linkrisk.live_engine import LiveLinkRiskEngine, LiveTransactionInput
+from linkrisk.live_engine_v2 import LiveLinkRiskEngineV2
 from linkrisk.mentalist_runtime_policy import FrozenMentalistScorer, MentalistRuntimePolicy
 
 
@@ -48,8 +49,10 @@ VALIDATION_SNAPSHOT = {
     "intervention_share": 0.0600,
     "mentalist_novel_cases": 519,
     "mentalist_frauds_added": 50,
+    "mentalist_invocation_share": 0.0227,
+    "mentalist_bypass_share": 0.9773,
     "v5_review_precision": 0.5336,
-    "held_out_test_status": "sealed",
+    "held_out_test_status": "v1_final_opened_once",
 }
 
 
@@ -107,7 +110,7 @@ class EngineService:
                 ensure_model_assets(ROOT)
                 champion = FrozenChampionScorer.from_artifacts(ROOT)
                 mentalist = FrozenMentalistScorer.from_artifacts(ROOT)
-                engine = LiveLinkRiskEngine(
+                engine = LiveLinkRiskEngineV2(
                     champion,
                     mentalist_scorer=mentalist,
                     start_time=time.time(),
@@ -138,8 +141,8 @@ razorpay_state = RazorpayIntegrationState()
 service = EngineService(session_store, razorpay_state)
 app = FastAPI(
     title="LinkRisk API",
-    version="1.0.0",
-    description="Frozen v0.5 + Mentalist v1.0 payment-risk runtime.",
+    version="2.0.0",
+    description="Frozen risk models with LinkRisk v2 selective live orchestration.",
 )
 
 origins = [
@@ -236,7 +239,8 @@ def health() -> dict[str, Any]:
         "engine_loaded": engine_loaded,
         "asset_status": status,
         "last_error": service.last_error,
-        "held_out_test": "sealed",
+        "held_out_test": "v1_final_opened_once",
+        "runtime_policy": "cost_aware_v2_live",
         "razorpay_webhook_configured": bool(_razorpay_secret()),
         "session_persistence": _persistence_status(),
         "replayed_transactions": service.replayed_transactions,
@@ -252,9 +256,12 @@ def overview() -> dict[str, Any]:
         "verify": 0,
         "review": 0,
         "clock": 0.0,
+        "capacity": None,
     }
     if engine is not None:
         frame = engine.feed()
+        if hasattr(engine, "capacity_status"):
+            live["capacity"] = _jsonable(engine.capacity_status())
         if not frame.empty:
             actions = frame["Action"].astype(str)
             live.update(
@@ -278,9 +285,25 @@ def policy() -> dict[str, Any]:
     try:
         frozen = MentalistRuntimePolicy.from_artifact(ROOT)
         frozen.validate()
-        return _jsonable(asdict(frozen))
+        payload = asdict(frozen)
+        payload["live_orchestration"] = "cost_aware_v2_live"
+        payload["held_out_test_status"] = "v1_final_opened_once"
+        return _jsonable(payload)
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/api/capacity")
+def capacity() -> dict[str, Any]:
+    engine = _restore_if_persisted()
+    if engine is None or not hasattr(engine, "capacity_status"):
+        return {
+            "policy": "causal_token_bucket_v2",
+            "transactions_seen": 0,
+            "total_rate": 0.06,
+            "mentalist_rate": 0.01,
+        }
+    return _jsonable(engine.capacity_status())
 
 
 @app.get("/api/integrations/razorpay/status")
@@ -433,6 +456,7 @@ def transactions() -> dict[str, Any]:
                 "v5_risk": decision["linkrisk_risk"],
                 "jane_score": mentalist.get("score"),
                 "clue_count": mentalist.get("clue_count", 0),
+                "mentalist_invoked": mentalist.get("invoked", False),
                 "v5_action": decision.get("v5_action", decision["action"]),
                 "action": decision["action"],
                 "routing_reason": decision.get("routing_reason", "V5_ONLY"),
