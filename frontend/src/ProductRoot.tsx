@@ -3,6 +3,7 @@ import App from './App'
 import DemoScenarios from './DemoScenarios'
 import LiveEfficiencyStrip from './LiveEfficiencyStrip'
 import './demoScenarios.css'
+import './v2Overrides.css'
 
 type ProductMode = 'live' | 'demo'
 
