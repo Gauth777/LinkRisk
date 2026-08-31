@@ -1,0 +1,26 @@
+.runtime-card b,
+.runtime-card span,
+.sealed-pill span {
+  font-size: 0;
+}
+
+.runtime-card b::after {
+  content: 'Selective v2 runtime';
+  font-size: 0.82rem;
+}
+
+.runtime-card span::after {
+  content: 'v1 final evaluated · v2 development';
+  font-size: 0.7rem;
+}
+
+.sealed-pill span::after {
+  content: 'v1 final evaluated once';
+  font-size: 0.78rem;
+}
+
+@media (max-width: 1100px) {
+  .live-efficiency-strip {
+    display: none !important;
+  }
+}
