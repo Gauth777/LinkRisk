@@ -21,6 +21,6 @@
 
 @media (max-width: 1100px) {
   .live-efficiency-strip {
-    display: none;
+    display: none !important;
   }
 }
