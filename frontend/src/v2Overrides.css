@@ -19,6 +19,124 @@
   font-size: 0.78rem !important;
 }
 
+/* Live mode is a product mode, not a synonym for "has transactions". */
+.runtime-status > span:last-child {
+  font-size: 0;
+}
+
+.runtime-status:has(.status-pulse.ready) > span:last-child::after {
+  content: 'live session';
+  font-size: 0.76rem;
+}
+
+.runtime-status:not(:has(.status-pulse.ready)) > span:last-child::after {
+  content: 'engine unavailable';
+  font-size: 0.76rem;
+}
+
+/* Selective reasoning telemetry belongs out of the navigation hierarchy. */
+.live-efficiency-strip {
+  position: fixed;
+  z-index: 32;
+  right: 24px;
+  bottom: 22px;
+  width: 344px;
+  padding: 13px 14px;
+  border: 1px solid rgba(100, 190, 255, 0.18);
+  border-radius: 14px;
+  background: rgba(7, 20, 34, 0.94);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
+  color: #d7e6f4;
+  backdrop-filter: blur(14px);
+  pointer-events: none;
+}
+
+.efficiency-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 11px;
+}
+
+.efficiency-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5ce1b9;
+  box-shadow: 0 0 12px rgba(92, 225, 185, 0.55);
+}
+
+.efficiency-heading div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.efficiency-heading b {
+  color: #eef7ff;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.efficiency-heading small {
+  color: #718ca4;
+  font-size: 0.66rem;
+}
+
+.efficiency-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.efficiency-metrics > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(123, 166, 201, 0.11);
+  border-radius: 10px;
+  background: rgba(15, 35, 54, 0.62);
+}
+
+.efficiency-metrics strong {
+  display: block;
+  color: #f4f9fd;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.efficiency-metrics span {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #7893aa;
+  font-size: 0.63rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.efficiency-alerts {
+  display: flex;
+  gap: 8px;
+  margin-top: 9px;
+  color: #f5c66b;
+  font-size: 0.64rem;
+}
+
+.efficiency-alerts span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(245, 198, 107, 0.08);
+}
+
+@media (max-width: 1280px) {
+  .live-efficiency-strip {
+    right: 16px;
+    bottom: 16px;
+    width: 308px;
+  }
+}
+
 @media (max-width: 1100px) {
   .live-efficiency-strip {
     display: none !important;
