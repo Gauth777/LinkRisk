@@ -12,6 +12,7 @@ import pandas as pd
 from xgboost import XGBClassifier
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from backend.model_assets import ensure_model_assets
@@ -251,7 +252,6 @@ def main() -> None:
     graph_vs_tab = delta(graph_val, tab_val)
     graph_vs_frozen = delta(graph_val, frozen_val)
 
-    # A challenger is only interesting if graph information buys a material gain.
     promising = bool(
         (
             graph_val["pr_auc"] >= frozen_val["pr_auc"] + 0.015
