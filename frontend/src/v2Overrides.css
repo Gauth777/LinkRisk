@@ -19,47 +19,83 @@
   font-size: 0.78rem !important;
 }
 
-/* Live mode is a product mode, not a synonym for "has transactions". */
-.runtime-status > b,
-.runtime-status > span:last-child {
-  font-size: 0;
+/* App.tsx retains its legacy runtime placeholder for layout width only. */
+.live-product-root .runtime-status {
+  visibility: hidden;
 }
 
-.runtime-status:has(.status-pulse.ready) > b::after {
-  content: 'Engine ready';
-  font-size: 0.78rem;
-}
-
-.runtime-status:has(.status-pulse.ready) > span:last-child::after {
-  content: 'live session';
-  font-size: 0.76rem;
-}
-
-.runtime-status:not(:has(.status-pulse.ready)) > b::after {
-  content: 'Engine unavailable';
-  font-size: 0.78rem;
-}
-
-.runtime-status:not(:has(.status-pulse.ready)) > span:last-child::after {
-  content: 'check deployment';
-  font-size: 0.76rem;
-}
-
-/* Selective reasoning telemetry belongs out of the navigation hierarchy. */
-.live-efficiency-strip {
+.live-runtime-status {
   position: fixed;
-  z-index: 32;
-  right: 24px;
-  bottom: 22px;
-  width: 344px;
-  padding: 13px 14px;
-  border: 1px solid rgba(100, 190, 255, 0.18);
-  border-radius: 14px;
-  background: rgba(7, 20, 34, 0.94);
-  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.28);
-  color: #d7e6f4;
-  backdrop-filter: blur(14px);
+  z-index: 1201;
+  top: 0;
+  left: 266px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 220px;
+  color: #dceaf4;
   pointer-events: none;
+}
+
+.live-runtime-status b {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.live-runtime-status > span:last-child {
+  color: #91a4b6;
+  font-size: 11px;
+}
+
+.live-runtime-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f1bc56;
+  box-shadow: 0 0 10px rgba(241, 188, 86, .55);
+}
+
+.live-runtime-status.ready .live-runtime-dot {
+  background: #47d7a3;
+  box-shadow: 0 0 10px rgba(71, 215, 163, .68);
+}
+
+.live-runtime-status.error .live-runtime-dot {
+  background: #ff6d78;
+  box-shadow: 0 0 10px rgba(255, 109, 120, .55);
+}
+
+/* On wide screens the telemetry owns a dedicated right rail. The dashboard
+   content reserves that rail, so model diagrams and data cards never sit under
+   the telemetry panel. */
+@media (min-width: 1500px) {
+  .live-product-root .content {
+    padding-right: 350px;
+  }
+
+  .live-efficiency-strip {
+    position: fixed;
+    z-index: 30;
+    right: 26px;
+    top: 104px;
+    width: 294px;
+    padding: 14px;
+    border: 1px solid rgba(100, 190, 255, 0.18);
+    border-radius: 14px;
+    background: rgba(7, 20, 34, 0.96);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+    color: #d7e6f4;
+    backdrop-filter: blur(14px);
+    pointer-events: none;
+  }
+}
+
+/* Never float telemetry on top of product content on smaller screens. */
+@media (max-width: 1499px) {
+  .live-efficiency-strip {
+    display: none !important;
+  }
 }
 
 .efficiency-heading {
@@ -140,16 +176,8 @@
   background: rgba(245, 198, 107, 0.08);
 }
 
-@media (max-width: 1280px) {
-  .live-efficiency-strip {
-    right: 16px;
-    bottom: 16px;
-    width: 308px;
-  }
-}
-
-@media (max-width: 1100px) {
-  .live-efficiency-strip {
-    display: none !important;
+@media (max-width: 1320px) {
+  .live-runtime-status {
+    left: 236px;
   }
 }
