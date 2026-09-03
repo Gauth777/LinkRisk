@@ -11,32 +11,32 @@ const titleCase = (value: string) => value.toLowerCase().replaceAll('_', ' ').re
 const scenarioCopy: Record<string, { title: string; summary: string; reason: string; clues: string[] }> = {
   'TX-8F2D7K1E': {
     title: 'Mentalist proactive escalation',
-    summary: 'The transaction model would allow it, but multiple present-tense evidence families form a stronger case.',
-    reason: 'Jane clears the frozen proactive threshold with at least two independent clue families, so ALLOW becomes VERIFY.',
+    summary: 'The transaction model would allow it, but multiple present-tense evidence families justify deeper reasoning.',
+    reason: 'The cheap evidence gate finds at least two independent clue families, Mentalist clears its frozen threshold, and available capacity admits the case to VERIFY.',
     clues: ['Velocity', 'Behavior change', 'Coordination'],
   },
   'TX-7H9J3L0B': {
     title: 'Clean low-risk payment',
-    summary: 'Low transaction risk, no corroborating behavioral evidence and no reason to consume intervention capacity.',
-    reason: 'Both the v0.5 path and Mentalist remain below their escalation gates, so the payment stays ALLOW.',
+    summary: 'Low transaction risk and no corroborating behavioral evidence mean deeper reasoning is unnecessary.',
+    reason: 'The cheap evidence gate bypasses Mentalist completely, so the payment remains ALLOW without spending deeper-model inference or intervention capacity.',
     clues: [],
   },
   'TX-1K3M9P2Q': {
     title: 'v0.5 verification case',
-    summary: 'The frozen v0.5 policy already considers this payment worthy of verification without Mentalist promotion.',
-    reason: 'The v0.5 risk path reaches VERIFY. Mentalist does not need to override or promote the case.',
+    summary: 'The frozen v0.5 policy already considers this payment worthy of verification, so Mentalist is not invoked.',
+    reason: 'v0.5 reaches VERIFY directly. The selective runtime avoids redundant Mentalist inference and admits the case through available intervention capacity.',
     clues: ['Single weak clue'],
   },
   'TX-6G7H2N4R': {
     title: 'Hard review boundary',
-    summary: 'A high-risk transaction crosses the frozen review boundary and is escalated to manual review.',
-    reason: 'v0.5 REVIEW is immutable. Mentalist can explain additional evidence but cannot downgrade or create REVIEW.',
+    summary: 'A high-risk transaction crosses the frozen review boundary and is escalated directly to manual review.',
+    reason: 'v0.5 REVIEW is immutable. Mentalist is not invoked because deeper reasoning cannot downgrade or create this safety-critical action.',
     clues: ['High transaction risk', 'Corroborating context'],
   },
   'TX-9P8Q1S7T': {
     title: 'Routine payment',
     summary: 'A second benign example showing that ordinary activity is deliberately left untouched.',
-    reason: 'Low v0.5 and Jane scores with zero clue families keep the payment ALLOW.',
+    reason: 'Low v0.5 risk and no corroborating clue families cause Mentalist to be bypassed, keeping the payment ALLOW.',
     clues: [],
   },
 }
@@ -55,6 +55,7 @@ export default function DemoScenarios({ onGoLive }: { onGoLive: () => void }) {
   const [selectedId, setSelectedId] = useState(previewFeed[0].transaction_id)
   const selected = useMemo(() => previewFeed.find((item) => item.transaction_id === selectedId) ?? previewFeed[0], [selectedId])
   const copy = scenarioCopy[selected.transaction_id]
+  const mentalistInvoked = selected.jane_score != null
 
   return <div className="demo-page">
     <header className="demo-header">
@@ -67,7 +68,7 @@ export default function DemoScenarios({ onGoLive }: { onGoLive: () => void }) {
       <section className="demo-hero">
         <span>Presentation workspace</span>
         <h1>Explain ALLOW, VERIFY and REVIEW without mixing demo data into the live feed.</h1>
-        <p>These curated cases exist only to demonstrate the frozen LinkRisk routing logic. New payments and Razorpay Checkout are available exclusively in Live Session.</p>
+        <p>These curated cases demonstrate the cost-aware v2 routing logic. Mentalist is only shown when selective inference is actually invoked. New payments and Razorpay Checkout remain exclusive to Live Session.</p>
       </section>
 
       <section className="demo-layout">
@@ -94,14 +95,14 @@ export default function DemoScenarios({ onGoLive }: { onGoLive: () => void }) {
 
           <div className="demo-score-grid">
             <div><span>v0.5 risk</span><strong>{score(selected.v5_risk)}</strong><small>raw ranking score</small></div>
-            <div><span>Jane score</span><strong>{score(selected.jane_score)}</strong><small>proactive evidence score</small></div>
-            <div><span>Independent clues</span><strong>{selected.clue_count}</strong><small>evidence families</small></div>
+            <div><span>Mentalist</span><strong>{mentalistInvoked ? score(selected.jane_score) : 'SKIP'}</strong><small>{mentalistInvoked ? 'proactive evidence score' : 'selective inference bypassed'}</small></div>
+            <div><span>Independent clues</span><strong>{selected.clue_count}</strong><small>cheap evidence families</small></div>
           </div>
 
           <div className="demo-decision-flow">
             <div><span>v0.5 action</span><ActionBadge action={selected.v5_action} /></div>
             <ArrowRight size={22} />
-            <div className="demo-jane-step"><BrainCircuit size={20} /><span>Mentalist</span><b>{score(selected.jane_score)}</b></div>
+            <div className="demo-jane-step"><BrainCircuit size={20} /><span>Mentalist</span><b>{mentalistInvoked ? score(selected.jane_score) : 'BYPASS'}</b></div>
             <ArrowRight size={22} />
             <div><span>Final action</span><ActionBadge action={selected.action} /></div>
           </div>
