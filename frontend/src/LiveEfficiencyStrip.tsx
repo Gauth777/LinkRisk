@@ -41,8 +41,7 @@ export default function LiveEfficiencyStrip() {
           setDevelopmentInvocation(payload.validation.mentalist_invocation_share)
         }
       } catch {
-        // The main dashboard already handles preview/offline state. This strip is
-        // supplemental and should never block the product if the API is absent.
+        // Supplemental telemetry must never block the primary product surface.
       }
     }
 
@@ -61,33 +60,27 @@ export default function LiveEfficiencyStrip() {
   const sustainedBudget = capacity?.total_rate ?? 0.06
   const tokens = capacity?.total_tokens ?? 6
   const burst = capacity?.total_burst ?? 6
+  const deepCheckLabel = liveSeen > 0 ? `${invoked}/${liveSeen}` : pct(developmentInvocation)
 
-  return <div className="live-efficiency-strip" style={{
-    position: 'fixed',
-    zIndex: 35,
-    left: '50%',
-    top: 72,
-    transform: 'translateX(-50%)',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 18,
-    maxWidth: 'calc(100vw - 360px)',
-    padding: '8px 14px',
-    border: '1px solid rgba(100, 190, 255, .22)',
-    borderRadius: 10,
-    background: 'rgba(7, 20, 34, .94)',
-    boxShadow: '0 10px 30px rgba(0,0,0,.22)',
-    color: '#d7e6f4',
-    fontSize: 12,
-    backdropFilter: 'blur(12px)',
-    pointerEvents: 'none',
-  }}>
-    <b style={{ color: '#75d7ff', letterSpacing: '.04em' }}>V2 SELECTIVE</b>
-    <span><strong>{liveSeen ? invoked : '2.27%'}</strong> {liveSeen ? `of ${liveSeen}` : 'development'} Mentalist {liveSeen ? 'invocations' : 'invocation rate'}</span>
-    <span><strong>{pct(liveBypassShare)}</strong> reasoning bypass</span>
-    <span><strong>{pct(sustainedBudget)}</strong> sustained intervention budget</span>
-    <span><strong>{tokens.toFixed(1)}/{burst.toFixed(0)}</strong> live capacity tokens</span>
-    {!!capacity?.capacity_denials && <span><strong>{capacity.capacity_denials}</strong> deferred</span>}
-    {!!capacity?.mandatory_review_overflow && <span><strong>{capacity.mandatory_review_overflow}</strong> safety overflow</span>}
-  </div>
+  return <aside className="live-efficiency-strip" aria-label="Selective reasoning telemetry">
+    <div className="efficiency-heading">
+      <span className="efficiency-dot" />
+      <div>
+        <b>Selective reasoning</b>
+        <small>{liveSeen > 0 ? 'live runtime' : 'development profile'}</small>
+      </div>
+    </div>
+
+    <div className="efficiency-metrics">
+      <div><strong>{pct(liveBypassShare)}</strong><span>reasoning bypass</span></div>
+      <div><strong>{deepCheckLabel}</strong><span>{liveSeen > 0 ? 'deep checks' : 'invocation rate'}</span></div>
+      <div><strong>{pct(sustainedBudget)}</strong><span>sustained budget</span></div>
+      <div><strong>{tokens.toFixed(1)}/{burst.toFixed(0)}</strong><span>live capacity</span></div>
+    </div>
+
+    {(!!capacity?.capacity_denials || !!capacity?.mandatory_review_overflow) && <div className="efficiency-alerts">
+      {!!capacity?.capacity_denials && <span>{capacity.capacity_denials} deferred</span>}
+      {!!capacity?.mandatory_review_overflow && <span>{capacity.mandatory_review_overflow} safety overflow</span>}
+    </div>}
+  </aside>
 }
