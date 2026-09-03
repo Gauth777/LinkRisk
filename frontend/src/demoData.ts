@@ -16,7 +16,11 @@ export const previewOverview: OverviewPayload = {
   engine_ready: false,
 }
 
-export const previewFeed: FeedItem[] = [
+/* Live Session must never bootstrap with illustrative transactions. */
+export const previewFeed: FeedItem[] = []
+
+/* Curated examples are isolated to the explicitly labeled Demo Scenarios mode. */
+export const demoScenarioFeed: FeedItem[] = [
   {
     transaction_id: 'TX-8F2D7K1E', transaction_time: 15300, amount: 8750,
     profile: 'PROFILE-A', device: 'Chrome / Windows', baseline_risk: .41,
@@ -49,68 +53,39 @@ export const previewFeed: FeedItem[] = [
   },
 ]
 
+/* Neutral selection while a live session contains no transactions. */
 export const previewCase: CaseRecord = {
-  transaction_id: 'TX-8F2D7K1E',
-  transaction_time: 15300,
+  transaction_id: 'NO-LIVE-TRANSACTION',
+  transaction_time: 0,
   input: {
-    amount: 8750,
-    payment_profile: 'PROFILE-A',
-    device_info: 'Chrome 124 / Windows 11',
-    receiver_domain: 'merchant.example',
-    browser_context: 'chrome-124-win11',
-    product_code: 'W', payer_domain: 'gmail.com', device_type: 'desktop',
-    card_network: 'visa', card_type: 'debit',
+    amount: 0,
+    payment_profile: 'No live transaction selected',
+    device_info: '—',
+    receiver_domain: '—',
+    browser_context: '—',
+    product_code: '—', payer_domain: '—', device_type: '—',
+    card_network: '—', card_type: '—',
   },
   decision: {
-    baseline_risk: .41,
-    linkrisk_risk: .39,
+    baseline_risk: 0,
+    linkrisk_risk: 0,
     graph_confidence: 0,
     v5_action: 'ALLOW',
-    action: 'VERIFY',
-    routing_reason: 'MENTALIST_CAPACITY_AUTHORIZED',
+    action: 'ALLOW',
+    routing_reason: 'NO_LIVE_TRANSACTION',
     policy_version: 'cost_aware_v2_live',
   },
-  mentalist: {
-    score: .82,
-    score_threshold: .67634242773056,
-    clue_count: 3,
-    min_clue_families: 2,
-    clue_families: {
-      coordination: true,
-      velocity: true,
-      behavior_change: true,
-      reuse_churn: false,
-    },
-    promoted_by_jane: true,
-    displaced_v5_verify: false,
-    uses_confirmed_fraud_as_input: false,
-  },
+  mentalist: null,
   case_file: {
     v5_action: 'ALLOW',
-    final_action: 'VERIFY',
-    action_changed: true,
-    routing_reason: 'MENTALIST_CAPACITY_AUTHORIZED',
-    explanation: 'Corroborating present-tense behavioral evidence justified selective Mentalist inference and available live capacity admitted the case to VERIFY.',
+    final_action: 'ALLOW',
+    action_changed: false,
+    routing_reason: 'NO_LIVE_TRANSACTION',
+    explanation: 'Create or receive a live payment to populate the investigation workspace.',
     trusted_history_channels: 0,
     trusted_fraud_channels: 0,
     trusted_fraud_evidence_present: false,
   },
-  network: {
-    nodes: [
-      { id: 'tx:current', label: 'TX-8F2D7K1E', kind: 'current', detail: '$8,750 current payment' },
-      { id: 'rel:device', label: 'Device context', kind: 'relation', detail: 'Shared device/browser context' },
-      { id: 'rel:profile', label: 'Payment profile', kind: 'relation', detail: 'Profile relationship' },
-      { id: 'tx:a', label: 'Prior TX A', kind: 'prior', detail: 'Unadjudicated prior payment' },
-      { id: 'tx:b', label: 'Prior TX B', kind: 'prior', detail: 'Unadjudicated prior payment' },
-      { id: 'tx:c', label: 'Prior TX C', kind: 'prior', detail: 'Unadjudicated prior payment' },
-    ],
-    edges: [
-      { source: 'tx:current', target: 'rel:device' },
-      { source: 'tx:current', target: 'rel:profile' },
-      { source: 'rel:device', target: 'tx:a' },
-      { source: 'rel:device', target: 'tx:b' },
-      { source: 'rel:profile', target: 'tx:c' },
-    ],
-  },
+  network: { nodes: [], edges: [] },
   adjudication: { outcome: null, state: 'unadjudicated', seconds_remaining: null },
 }
