@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowRight, BrainCircuit, CheckCircle2, Eye, ShieldAlert, ShieldCheck, Sparkles } from 'lucide-react'
-import { previewFeed } from './demoData'
-import type { Action, FeedItem } from './types'
+import { demoScenarioFeed } from './demoData'
+import type { Action } from './types'
 import './demoScenarios.css'
 
 const score = (value?: number | null) => value == null ? '—' : Math.round(Math.max(0, Math.min(1, value)) * 100).toString()
@@ -52,8 +52,8 @@ function ScenarioIcon({ action }: { action: Action }) {
 }
 
 export default function DemoScenarios({ onGoLive }: { onGoLive: () => void }) {
-  const [selectedId, setSelectedId] = useState(previewFeed[0].transaction_id)
-  const selected = useMemo(() => previewFeed.find((item) => item.transaction_id === selectedId) ?? previewFeed[0], [selectedId])
+  const [selectedId, setSelectedId] = useState(demoScenarioFeed[0].transaction_id)
+  const selected = useMemo(() => demoScenarioFeed.find((item) => item.transaction_id === selectedId) ?? demoScenarioFeed[0], [selectedId])
   const copy = scenarioCopy[selected.transaction_id]
   const mentalistInvoked = selected.jane_score != null
 
@@ -73,7 +73,7 @@ export default function DemoScenarios({ onGoLive }: { onGoLive: () => void }) {
 
       <section className="demo-layout">
         <div className="demo-list">
-          {previewFeed.map((item) => {
+          {demoScenarioFeed.map((item) => {
             const active = item.transaction_id === selected.transaction_id
             return <button key={item.transaction_id} className={`demo-scenario-card ${active ? 'active' : ''}`} onClick={() => setSelectedId(item.transaction_id)}>
               <span className={`demo-icon demo-icon-${item.action.toLowerCase()}`}><ScenarioIcon action={item.action} /></span>
