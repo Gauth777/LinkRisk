@@ -20,8 +20,14 @@
 }
 
 /* Live mode is a product mode, not a synonym for "has transactions". */
+.runtime-status > b,
 .runtime-status > span:last-child {
   font-size: 0;
+}
+
+.runtime-status:has(.status-pulse.ready) > b::after {
+  content: 'Engine ready';
+  font-size: 0.78rem;
 }
 
 .runtime-status:has(.status-pulse.ready) > span:last-child::after {
@@ -29,8 +35,13 @@
   font-size: 0.76rem;
 }
 
+.runtime-status:not(:has(.status-pulse.ready)) > b::after {
+  content: 'Engine unavailable';
+  font-size: 0.78rem;
+}
+
 .runtime-status:not(:has(.status-pulse.ready)) > span:last-child::after {
-  content: 'engine unavailable';
+  content: 'check deployment';
   font-size: 0.76rem;
 }
 
