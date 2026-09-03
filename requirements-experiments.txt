@@ -1,0 +1,7 @@
+# Optional research dependencies. Do NOT install these in the production Render image.
+# AutoGluon is used only for development-validation challenger experiments.
+autogluon.tabular>=1.5,<1.7
+
+# GNN feasibility work is intended for a GPU/Colab environment.
+# Install PyTorch for the available CUDA runtime first, then:
+torch_geometric>=2.7,<2.9
