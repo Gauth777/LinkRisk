@@ -234,11 +234,137 @@
   border: 1px solid rgba(255, 95, 116, .25);
 }
 
+.risk-ops-loop {
+  padding: 20px 26px 24px;
+  border-top: 1px solid rgba(116, 145, 171, .18);
+  background: linear-gradient(180deg, rgba(5, 18, 31, .16), rgba(5, 18, 31, .3));
+}
+
+.risk-ops-loop-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.risk-ops-loop-head b,
+.risk-ops-loop-head span {
+  display: block;
+}
+
+.risk-ops-loop-head b {
+  margin-top: 4px;
+  font-size: 16px;
+  color: #e5eef5;
+}
+
+.risk-ops-loop-head small {
+  max-width: 560px;
+  color: #7890a5;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.risk-ops-loop-steps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1.2fr) auto minmax(0, 1.1fr) auto minmax(0, 1.2fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.risk-ops-loop-steps > svg {
+  color: #45627c;
+}
+
+.risk-loop-step {
+  min-width: 0;
+  min-height: 82px;
+  padding: 12px 13px;
+  border-radius: 12px;
+  border: 1px solid rgba(115, 142, 165, .14);
+  background: rgba(5, 17, 29, .27);
+}
+
+.risk-loop-step > span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  margin-bottom: 9px;
+  color: #7f97ac;
+  background: rgba(92, 116, 137, .12);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.risk-loop-step b,
+.risk-loop-step small {
+  display: block;
+}
+
+.risk-loop-step b {
+  color: #91a7ba;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+
+.risk-loop-step small {
+  margin-top: 4px;
+  color: #6f879b;
+  line-height: 1.3;
+}
+
+.risk-loop-step.complete {
+  border-color: rgba(70, 213, 191, .22);
+  background: rgba(24, 129, 118, .07);
+}
+
+.risk-loop-step.complete > span {
+  color: #62dcc5;
+  background: rgba(40, 174, 151, .11);
+}
+
+.risk-loop-step.complete b {
+  color: #a8c7c2;
+}
+
+.risk-loop-step.memory {
+  border-color: rgba(149, 113, 255, .3);
+  background: rgba(116, 77, 234, .08);
+}
+
+.risk-loop-step.memory > span {
+  color: #bba7ff;
+  background: rgba(116, 77, 234, .13);
+}
+
 .jane-escalation .spin {
   animation: jane-spin .8s linear infinite;
 }
 
 @keyframes jane-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1100px) {
+  .risk-ops-loop-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .risk-ops-loop-head small {
+    text-align: left;
+  }
+
+  .risk-ops-loop-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-ops-loop-steps > svg {
+    transform: rotate(90deg);
+    justify-self: center;
+  }
+}
 
 @media (max-width: 900px) {
   .jane-escalation-head,
