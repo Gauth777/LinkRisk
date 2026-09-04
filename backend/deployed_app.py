@@ -9,8 +9,9 @@ surfaces the deployment problem instead of crashing the web service.
 
 from pathlib import Path
 
-from backend.api import app, service
+from backend.api import _jsonable, app, service
 from backend.hardening import LinkRiskHardeningMiddleware
+from backend.jane_operations import build_jane_operations_router
 from backend.merchant_dashboard import build_merchant_dashboard_router
 from backend.protection import build_protection_router
 
@@ -22,6 +23,12 @@ app.include_router(
     )
 )
 app.include_router(build_merchant_dashboard_router())
+app.include_router(
+    build_jane_operations_router(
+        engine_provider=service.get,
+        jsonable=_jsonable,
+    )
+)
 
 # Keep operational hardening outside the ML/runtime implementation so scoring,
 # persistence semantics and the React product surface remain unchanged.
