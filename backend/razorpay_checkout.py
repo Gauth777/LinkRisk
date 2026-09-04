@@ -70,6 +70,22 @@ def _major_to_subunits(amount: float) -> int:
     return subunits
 
 
+def _advance_arrival_clock(engine: LiveLinkRiskEngine, *, now: float | None = None) -> float:
+    """Assign a strictly increasing causal time to a newly verified payment.
+
+    The demo clock may be advanced days into the future to mature feedback. In
+    that state ``max(engine.clock, time.time())`` would stamp every subsequent
+    payment with the same timestamp until wall-clock time caught up. Because the
+    relationship builders intentionally hide same-timestamp peers, that made a
+    sequential checkout burst look causally unrelated. Advance by a tiny epsilon
+    when simulated time is ahead while still preferring real arrival time during
+    ordinary operation.
+    """
+    wall_time = time.time() if now is None else float(now)
+    engine.clock = max(wall_time, float(engine.clock) + 1e-3)
+    return float(engine.clock)
+
+
 def build_checkout_router(
     *,
     state: RazorpayIntegrationState,
@@ -204,7 +220,7 @@ def build_checkout_router(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        engine.clock = max(float(engine.clock), time.time())
+        _advance_arrival_clock(engine)
         transaction_id = f"RZP-{request.razorpay_payment_id}"
 
         try:
