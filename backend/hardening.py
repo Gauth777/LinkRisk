@@ -28,7 +28,7 @@ from starlette.responses import JSONResponse, Response
 ADMIN_HEADER = "x-linkrisk-admin"
 ALLOWED_METHODS = frozenset({"GET", "POST", "DELETE", "OPTIONS", "HEAD"})
 ALLOWED_HEADERS = frozenset({"content-type", ADMIN_HEADER})
-ACTION_RE = re.compile(r"^/api/transactions/[^/]+/(deep-investigate|adjudicate|protect/refund)$")
+ACTION_RE = re.compile(r"^/api/transactions/[^/]+/(deep-investigate|jane-escalate|adjudicate|protect/refund)$")
 ADJ_DELETE_RE = re.compile(r"^/api/transactions/[^/]+/adjudication$")
 logger = logging.getLogger("uvicorn.error")
 
@@ -62,7 +62,7 @@ def is_serialized_engine_operation(method: str, path: str) -> bool:
         "/api/session/reset",
     }:
         return True
-    if method == "POST" and re.match(r"^/api/transactions/[^/]+/(deep-investigate|adjudicate)$", path):
+    if method == "POST" and re.match(r"^/api/transactions/[^/]+/(deep-investigate|jane-escalate|adjudicate)$", path):
         return True
     return bool(method == "DELETE" and ADJ_DELETE_RE.match(path))
 
@@ -77,6 +77,8 @@ def rate_limit_policy(method: str, path: str) -> tuple[str, int, float] | None:
         return ("simulator_transactions", 30, 60.0)
     if method == "POST" and path.endswith("/deep-investigate"):
         return ("jane_investigation", 20, 60.0)
+    if method == "POST" and path.endswith("/jane-escalate"):
+        return ("jane_operator_escalation", 20, 60.0)
     if method == "POST" and path.endswith("/protect/refund"):
         return ("test_refund", 6, 60.0)
     if method == "POST" and path.endswith("/adjudicate"):
