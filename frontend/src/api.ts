@@ -87,6 +87,9 @@ export const api = {
   verifyRazorpayPayment: (payload: RazorpaySuccess) => request<{ verified: boolean; duplicate_payment: boolean; transaction: CaseRecord }>('/api/integrations/razorpay/payments/verify', {
     method: 'POST', body: JSON.stringify(payload),
   }),
+  deepInvestigate: (id: string) => request<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}/deep-investigate`, {
+    method: 'POST',
+  }),
   adjudicate: (id: string, outcome: 'fraud' | 'legitimate') => request<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}/adjudicate`, {
     method: 'POST', body: JSON.stringify({ outcome }),
   }),

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from linkrisk.baseline import ID_COL
 from linkrisk.cost_aware_router_v2 import evidence_gate
@@ -56,6 +57,92 @@ class LiveLinkRiskEngineV2(LiveLinkRiskEngine):
 
     def capacity_status(self) -> dict[str, Any]:
         return self.capacity_controller.snapshot()
+
+    def deep_investigate(self, transaction_id: str) -> dict[str, Any]:
+        """Run Jane on the original transaction-time evidence as an analyst request.
+
+        Automatic v2 routing intentionally bypasses Mentalist for v0.5 REVIEW and
+        many low-evidence rows. A human analyst may still request a second opinion.
+        This method reuses the proactive feature snapshot captured when the
+        transaction was scored, so later traffic and adjudications cannot leak into
+        the deduction. It does not consume capacity tokens or alter the frozen action.
+        """
+        tx_id = str(transaction_id)
+        if tx_id not in self._records:
+            raise KeyError(f"Unknown transaction id: {tx_id}")
+        if self.mentalist_scorer is None:
+            raise RuntimeError("Mentalist scorer is unavailable")
+
+        record = self._records[tx_id]
+        if record.get("analyst_jane") is not None:
+            return record
+
+        proactive_row = record.get("proactive_features")
+        if not isinstance(proactive_row, dict) or not proactive_row:
+            raise ValueError("Transaction has no stored proactive evidence snapshot")
+
+        proactive = pd.DataFrame([proactive_row], index=[tx_id])
+        baseline_risk = float(record["decision"]["baseline_risk"])
+        state = self.mentalist_scorer.score_batch(
+            proactive,
+            np.asarray([baseline_risk], dtype=float),
+        )
+
+        jane_score = float(state.jane_scores[0])
+        clue_count = int(state.clue_count[0])
+        clue_row = state.clue_frame.iloc[0].to_dict()
+        clue_families = {
+            family: bool(int(clue_row.get(f"clue_{family}", 0)))
+            for family in MENTALIST_FAMILIES
+        }
+        threshold = float(self.mentalist_scorer.policy.jane_score_threshold)
+        min_clues = int(self.mentalist_scorer.policy.min_clue_families)
+        corroborates = bool(jane_score >= threshold and clue_count >= min_clues)
+        action = str(record["decision"]["action"])
+
+        if action == "REVIEW":
+            assessment = (
+                "Corroborates REVIEW"
+                if corroborates
+                else "Does not independently corroborate REVIEW"
+            )
+        elif action == "VERIFY":
+            assessment = (
+                "Corroborates VERIFY"
+                if corroborates
+                else "Weak secondary evidence"
+            )
+        else:
+            assessment = (
+                "Finds elevated present-tense evidence"
+                if corroborates
+                else "No actionable secondary evidence"
+            )
+
+        record["analyst_jane"] = {
+            "requested": True,
+            "invocation_mode": "analyst_requested",
+            "score": jane_score,
+            "score_threshold": threshold,
+            "clue_count": clue_count,
+            "min_clue_families": min_clues,
+            "clue_families": clue_families,
+            "candidate": corroborates,
+            "corroborates_intervention": bool(corroborates and action in {"VERIFY", "REVIEW"}),
+            "assessment_label": assessment,
+            "original_action": action,
+            "action_changed": False,
+            "capacity_consumed": False,
+            "uses_confirmed_fraud_as_input": False,
+            "evidence_time": float(record["transaction_time"]),
+            "scientific_note": (
+                "Analyst-requested advisory inference on the original transaction-time "
+                "label-free evidence snapshot; not a validated routing override."
+            ),
+        }
+        record["case_file"]["analyst_jane_requested"] = True
+        record["case_file"]["analyst_jane_assessment"] = assessment
+        return record
 
     def score_event(
         self,

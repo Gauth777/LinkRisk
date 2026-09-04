@@ -492,6 +492,31 @@ def transaction(transaction_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.post("/api/transactions/{transaction_id}/deep-investigate")
+def deep_investigate(transaction_id: str) -> dict[str, Any]:
+    """Run an analyst-requested Jane deduction without changing frozen routing."""
+    engine = _engine_or_503()
+    if not hasattr(engine, "deep_investigate"):
+        raise HTTPException(status_code=503, detail="Analyst Jane escalation is unavailable.")
+    try:
+        existing = engine.get_record(transaction_id).get("analyst_jane") is not None
+        record = engine.deep_investigate(transaction_id)
+        if not existing:
+            try:
+                session_store.append_analyst_investigation(transaction_id, float(engine.clock))
+            except SessionStoreError:
+                # The inference already succeeded; optional local persistence must
+                # not turn a valid analyst deduction into a false HTTP failure.
+                pass
+        return _jsonable(record)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.post("/api/transactions/{transaction_id}/adjudicate")
 def adjudicate(transaction_id: str, request: AdjudicationRequest) -> dict[str, Any]:
     engine = _engine_or_503()

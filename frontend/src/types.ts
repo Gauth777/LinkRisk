@@ -43,6 +43,24 @@ export type CaseRecord = {
     displaced_v5_verify: boolean
     uses_confirmed_fraud_as_input: boolean
   } | null
+  analyst_jane?: {
+    requested: boolean
+    invocation_mode: string
+    score: number
+    score_threshold: number
+    clue_count: number
+    min_clue_families: number
+    clue_families: Record<string, boolean>
+    candidate: boolean
+    corroborates_intervention: boolean
+    assessment_label: string
+    original_action: Action
+    action_changed: boolean
+    capacity_consumed: boolean
+    uses_confirmed_fraud_as_input: boolean
+    evidence_time: number
+    scientific_note: string
+  } | null
   case_file: {
     v5_action: Action
     final_action: Action

@@ -146,3 +146,35 @@ def test_capacity_status_reports_reasoning_usage():
     assert status["transactions_seen"] == 2
     assert status["mentalist_invoked"] == 0
     assert status["mentalist_bypassed"] == 2
+
+
+def test_review_can_request_jane_second_opinion_without_changing_action_or_capacity():
+    mentalist = CountingMentalistScorer(score=0.99, active_clues=True)
+    engine = LiveLinkRiskEngineV2(
+        _champion(baseline_score=0.95, specialist_score=0.95),
+        mentalist_scorer=mentalist,
+    )
+
+    record = engine.score_event(_event(), transaction_id="TX-REVIEW-JANE")
+    before = engine.capacity_status().copy()
+
+    assert record["decision"]["action"] == "REVIEW"
+    assert record["mentalist"]["invoked"] is False
+    assert mentalist.calls == 0
+
+    investigated = engine.deep_investigate("TX-REVIEW-JANE")
+    after = engine.capacity_status().copy()
+
+    assert mentalist.calls == 1
+    assert investigated["decision"]["action"] == "REVIEW"
+    assert investigated["analyst_jane"]["requested"] is True
+    assert investigated["analyst_jane"]["invocation_mode"] == "analyst_requested"
+    assert investigated["analyst_jane"]["corroborates_intervention"] is True
+    assert investigated["analyst_jane"]["action_changed"] is False
+    assert investigated["analyst_jane"]["capacity_consumed"] is False
+    assert investigated["analyst_jane"]["uses_confirmed_fraud_as_input"] is False
+    assert before == after
+
+    # Idempotent repeat: the stored transaction-time deduction is reused.
+    engine.deep_investigate("TX-REVIEW-JANE")
+    assert mentalist.calls == 1

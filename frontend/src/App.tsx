@@ -8,7 +8,7 @@ import {
   TimerReset, UserRoundSearch, UsersRound, X, Zap,
 } from 'lucide-react'
 import { api } from './api'
-import { ProtectionPanel } from './ProtectionPanel'
+import { JaneEscalationPanel } from './JaneEscalationPanel'
 import { previewCase, previewFeed, previewOverview } from './demoData'
 import type { Action, CaseRecord, FeedItem, NetworkNode, OverviewPayload } from './types'
 
@@ -382,6 +382,7 @@ function InvestigationPage({
   onAdjudicate,
   onAdvance,
   onNavigate,
+  onRecordUpdate,
 }: {
   record: CaseRecord
   preview: boolean
@@ -389,9 +390,13 @@ function InvestigationPage({
   onAdjudicate: (outcome: 'fraud' | 'legitimate') => void
   onAdvance: () => void
   onNavigate: (page: Page) => void
+  onRecordUpdate: (record: CaseRecord) => void
 }) {
   const hasSelection = !isNeutralRecord(record)
   const mentalist = hasSelection ? record.mentalist : null
+  const janeScore = record.analyst_jane?.score ?? mentalist?.score
+  const janeClueCount = record.analyst_jane?.clue_count ?? mentalist?.clue_count ?? 0
+  const evidenceClues = record.analyst_jane?.clue_families ?? mentalist?.clue_families ?? {}
 
   if (!hasSelection) {
     return <main className="content">
@@ -426,7 +431,7 @@ function InvestigationPage({
     <section className="decision-journey card">
       <div><span>v0.5 action</span><ActionBadge action={record.decision.v5_action} large /><small>risk {score(record.decision.linkrisk_risk)}/100</small></div>
       <ArrowRight size={26} />
-      <div className="jane-step"><span>Mentalist deduction</span><b>{score(mentalist?.score)}/100</b><small>{mentalist?.clue_count ?? 0} independent clue families</small></div>
+      <div className="jane-step"><span>Mentalist deduction</span><b>{score(janeScore)}/100</b><small>{janeClueCount} independent clue families</small></div>
       <ArrowRight size={26} />
       <div><span>Final action</span><ActionBadge action={record.decision.action} large /><small>{titleCase(record.decision.routing_reason)}</small></div>
     </section>
@@ -437,13 +442,13 @@ function InvestigationPage({
       <ScorePanel label="Mentalist" value={mentalist?.score} description="Present-tense evidence ranking" tone="purple" />
     </section>
 
-    <ProtectionPanel record={record} preview={preview} />
+    <JaneEscalationPanel record={record} preview={preview} onUpdated={onRecordUpdate} />
 
     <section className="investigation-grid">
       <div className="card case-evidence-card">
         <div className="card-heading"><div><h2>Patrick Jane — case file</h2><p>Independent evidence families; clue count is a safety gate, not a verdict.</p></div><span className="proactive-label"><Sparkles size={15} />No fraud-label input</span></div>
         <div className="evidence-grid">
-          {Object.entries(clueMeta).map(([key, meta]) => <EvidenceCard key={key} active={!!mentalist?.clue_families?.[key]} label={meta.label} description={meta.description} icon={meta.icon} />)}
+          {Object.entries(clueMeta).map(([key, meta]) => <EvidenceCard key={key} active={!!evidenceClues[key]} label={meta.label} description={meta.description} icon={meta.icon} />)}
         </div>
         <div className="case-explanation"><BrainCircuit size={22} /><div><b>{titleCase(record.case_file.routing_reason)}</b><p>{record.case_file.explanation}</p></div></div>
       </div>
@@ -865,7 +870,7 @@ export default function App() {
       case 'overview':
         return <OverviewPage overview={overview} feed={visibleFeed} sessionFeed={feed} selected={selected} onOpen={(item) => void openItem(item)} onNavigate={setPage} />
       case 'investigations':
-        return <InvestigationPage record={selected} preview={preview} onBack={() => setPage('overview')} onAdjudicate={(outcome) => void adjudicate(outcome)} onAdvance={() => void advance()} onNavigate={setPage} />
+        return <InvestigationPage record={selected} preview={preview} onBack={() => setPage('overview')} onAdjudicate={(outcome) => void adjudicate(outcome)} onAdvance={() => void advance()} onNavigate={setPage} onRecordUpdate={setSelected} />
       case 'feed':
         return <LiveFeedPage feed={visibleFeed} onOpen={(item) => void openItem(item)} onRefresh={() => void refreshAll()} />
       case 'network':

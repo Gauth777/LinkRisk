@@ -88,6 +88,15 @@ class LocalSessionStore:
     def append_clear_adjudication(self, transaction_id: str) -> None:
         self._append("clear_adjudication", {"transaction_id": transaction_id})
 
+    def append_analyst_investigation(self, transaction_id: str, requested_at: float) -> None:
+        self._append(
+            "analyst_jane",
+            {
+                "transaction_id": transaction_id,
+                "requested_at": float(requested_at),
+            },
+        )
+
     def append_clock(self, clock: float) -> None:
         self._append("clock", {"clock": float(clock)})
 
@@ -177,6 +186,12 @@ class LocalSessionStore:
 
             if event_type == "clear_adjudication":
                 engine.clear_adjudication(str(payload["transaction_id"]))
+                continue
+
+            if event_type == "analyst_jane":
+                if not hasattr(engine, "deep_investigate"):
+                    raise SessionStoreError("Runtime cannot replay analyst Jane investigation")
+                engine.deep_investigate(str(payload["transaction_id"]))
                 continue
 
             if event_type == "clock":
