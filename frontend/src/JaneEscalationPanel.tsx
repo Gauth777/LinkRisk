@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, ArrowRight, BrainCircuit, Check, Clock3, Database, Network, RefreshCw, SearchCheck, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BrainCircuit, Check, Clock3, Database, Network, RefreshCw, SearchCheck, ShieldAlert, ShieldCheck, Sparkles } from 'lucide-react'
 import { api } from './api'
 import { JaneEvidenceGraph } from './JaneEvidenceGraph'
 import type { CaseRecord } from './types'
@@ -26,6 +26,7 @@ export function JaneEscalationPanel({
   onUpdated: (record: CaseRecord) => void
 }) {
   const [loading, setLoading] = useState(false)
+  const [escalating, setEscalating] = useState(false)
   const [processingStep, setProcessingStep] = useState(0)
   const [showEvidence, setShowEvidence] = useState(false)
   const [error, setError] = useState('')
@@ -33,6 +34,7 @@ export function JaneEscalationPanel({
   useEffect(() => {
     setError('')
     setLoading(false)
+    setEscalating(false)
     setProcessingStep(0)
     setShowEvidence(false)
   }, [record.transaction_id])
@@ -45,6 +47,9 @@ export function JaneEscalationPanel({
   const visibleClueCount = analyst?.clue_count ?? record.mentalist?.clue_count ?? 0
   const threshold = analyst?.score_threshold ?? record.mentalist?.score_threshold ?? null
   const corroborates = analyst?.corroborates_intervention ?? false
+  const analystCandidate = !!analyst?.candidate
+  const canEscalate = !!analyst && analystCandidate && record.decision.action === 'ALLOW'
+  const operatorEscalated = !!analyst && record.decision.action === 'VERIFY' && record.decision.routing_reason === 'ANALYST_JANE_ESCALATED_TO_VERIFY'
   const adjudication = record.adjudication
   const outcome = adjudication?.outcome ?? null
   const memoryState = adjudication?.state ?? 'unadjudicated'
@@ -53,7 +58,7 @@ export function JaneEscalationPanel({
     : Math.max(0, Math.ceil(adjudication.seconds_remaining / 3600))
 
   const janeLifecycle = analyst
-    ? 'Analyst second opinion'
+    ? operatorEscalated ? 'Jane escalated by operator' : 'Analyst second opinion'
     : automatic
       ? 'Automatic investigation'
       : 'Available on demand'
@@ -91,6 +96,18 @@ export function JaneEscalationPanel({
     }
   }
 
+  const escalateJane = async () => {
+    setEscalating(true)
+    setError('')
+    try {
+      onUpdated(await api.escalateJane(record.transaction_id))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Jane escalation failed.')
+    } finally {
+      setEscalating(false)
+    }
+  }
+
   return <section className={`card jane-escalation ${analyst ? 'completed' : ''}`}>
     <div className="jane-escalation-head">
       <div className="jane-escalation-title">
@@ -101,12 +118,12 @@ export function JaneEscalationPanel({
           <p>{loading
             ? 'The original transaction-time evidence is being reconstructed before the frozen Mentalist model produces its advisory readout.'
             : automatic
-              ? 'The selective runtime already invoked Jane because the cheap evidence gate found enough independent clues.'
-              : 'A human investigator can explicitly spend deeper reasoning on this case without changing the frozen v0.5 decision automatically.'}</p>
+              ? 'The selective runtime already invoked Jane because the cheap evidence gate found enough independent clues. A frozen-threshold positive Jane result is now actionable even when the small live reserve is exhausted.'
+              : 'A human investigator can explicitly spend deeper reasoning on this case. Jane remains advisory until the operator explicitly escalates the operational action.'}</p>
         </div>
       </div>
-      <span className={`jane-escalation-state ${loading ? 'processing' : analyst ? (corroborates ? 'corroborates' : 'advisory') : automatic ? 'automatic' : ''}`}>
-        {loading ? <><RefreshCw className="spin" size={16} />PROCESSING</> : analyst ? (corroborates ? <><Check size={16} />CORROBORATES</> : <><SearchCheck size={16} />SECOND OPINION</>) : automatic ? <><Sparkles size={16} />AUTO-INVOKED</> : <><SearchCheck size={16} />AVAILABLE</>}
+      <span className={`jane-escalation-state ${loading ? 'processing' : analyst ? (analystCandidate ? 'corroborates' : 'advisory') : automatic ? 'automatic' : ''}`}>
+        {loading ? <><RefreshCw className="spin" size={16} />PROCESSING</> : analyst ? (analystCandidate ? <><Check size={16} />ACTIONABLE</> : <><SearchCheck size={16} />SECOND OPINION</>) : automatic ? <><Sparkles size={16} />AUTO-INVOKED</> : <><SearchCheck size={16} />AVAILABLE</>}
       </span>
     </div>
 
@@ -123,8 +140,8 @@ export function JaneEscalationPanel({
       </div>
       <div className="jane-signal-card conclusion">
         <span>Interpretation</span>
-        <strong>{analyst?.assessment_label ?? (record.mentalist?.candidate ? 'Actionable evidence' : 'No escalation signal')}</strong>
-        <em>Final action remains {record.decision.action}</em>
+        <strong>{operatorEscalated ? 'Operator escalated to VERIFY' : analyst?.assessment_label ?? (record.mentalist?.candidate ? 'Actionable evidence' : 'No escalation signal')}</strong>
+        <em>Operational action is {record.decision.action}</em>
       </div>
     </div>}
 
@@ -132,6 +149,25 @@ export function JaneEscalationPanel({
       {Object.entries(visibleClues).map(([family, active]) => <span className={active ? 'active' : ''} key={family}>
         {active ? <Check size={14} /> : null}{family.replaceAll('_', ' ')}
       </span>)}
+    </div>}
+
+    {canEscalate && <div className="jane-escalation-callout">
+      <ShieldAlert size={22} />
+      <div>
+        <b>Jane recommends VERIFY</b>
+        <span>The analyst-requested score and independent clue count both cross their frozen boundaries. The original model action remains preserved; this button records an explicit operator decision in the merchant-facing operational layer.</span>
+      </div>
+      <button disabled={preview || escalating} onClick={() => void escalateJane()}>
+        {escalating ? <><RefreshCw className="spin" size={18} />Escalating…</> : <><ShieldCheck size={18} />Escalate to VERIFY</>}
+      </button>
+    </div>}
+
+    {operatorEscalated && <div className="jane-escalation-callout">
+      <ShieldCheck size={22} />
+      <div>
+        <b>Operator escalation recorded</b>
+        <span>Jane’s second opinion was explicitly promoted to operational VERIFY. The frozen model result, Jane score, clues, causal graph, and adjudication history remain unchanged.</span>
+      </div>
     </div>}
 
     {(analyst || automatic) && <div className="jane-escalation-callout">
@@ -179,9 +215,9 @@ export function JaneEscalationPanel({
       </div>
     </div>}
 
-    {analyst && <div className="jane-advisory-note">
+    {analyst && !operatorEscalated && <div className="jane-advisory-note">
       <AlertTriangle size={17} />
-      <span><b>Advisory, not an override.</b> This analyst-requested pass uses the original transaction-time, label-free evidence snapshot. It does not consume fraud labels, intervention tokens, or silently change the frozen action.</span>
+      <span><b>Advisory until an operator acts.</b> This analyst-requested pass uses the original transaction-time, label-free evidence snapshot. It does not consume fraud labels or silently rewrite the frozen action; a qualifying result can be explicitly escalated above.</span>
     </div>}
 
     {error && <div className="jane-escalation-error"><AlertTriangle size={17} />{error}</div>}
