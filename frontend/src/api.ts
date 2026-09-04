@@ -155,6 +155,9 @@ export const api = {
   deepInvestigate: (id: string) => operatorRequest<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}/deep-investigate`, {
     method: 'POST',
   }),
+  escalateJane: (id: string) => operatorRequest<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}/jane-escalate`, {
+    method: 'POST',
+  }),
   adjudicate: (id: string, outcome: 'fraud' | 'legitimate') => operatorRequest<CaseRecord>(`/api/transactions/${encodeURIComponent(id)}/adjudicate`, {
     method: 'POST', body: JSON.stringify({ outcome }),
   }),
