@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, ArrowRight, BrainCircuit, Check, Clock3, Database, RefreshCw, SearchCheck, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BrainCircuit, Check, ChevronDown, ChevronUp, Clock3, Database, Network, RefreshCw, SearchCheck, ShieldCheck, Sparkles } from 'lucide-react'
 import { api } from './api'
+import { JaneEvidenceGraph } from './JaneEvidenceGraph'
 import type { CaseRecord } from './types'
 import './jane-escalation.css'
 
@@ -26,12 +27,14 @@ export function JaneEscalationPanel({
 }) {
   const [loading, setLoading] = useState(false)
   const [processingStep, setProcessingStep] = useState(0)
+  const [showEvidence, setShowEvidence] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
     setError('')
     setLoading(false)
     setProcessingStep(0)
+    setShowEvidence(false)
   }, [record.transaction_id])
 
   const analyst = record.analyst_jane ?? null
@@ -64,6 +67,7 @@ export function JaneEscalationPanel({
   const runJane = async () => {
     setLoading(true)
     setProcessingStep(0)
+    setShowEvidence(false)
     setError('')
 
     const startedAt = Date.now()
@@ -129,6 +133,16 @@ export function JaneEscalationPanel({
         {active ? <Check size={14} /> : null}{family.replaceAll('_', ' ')}
       </span>)}
     </div>}
+
+    {(analyst || automatic) && <div className="jane-evidence-toggle-wrap">
+      <button className={`jane-evidence-toggle ${showEvidence ? 'active' : ''}`} onClick={() => setShowEvidence((value) => !value)}>
+        <Network size={17} />
+        <span><b>{showEvidence ? 'Hide supporting relationships' : 'View supporting relationships'}</b><small>Inspect the transaction-time causal evidence behind Jane’s active clue families</small></span>
+        {showEvidence ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+      </button>
+    </div>}
+
+    {(analyst || automatic) && showEvidence && <JaneEvidenceGraph record={record} clueFamilies={visibleClues} />}
 
     {!automatic && !analyst && <div className="jane-escalation-callout">
       <ShieldCheck size={22} />
