@@ -10,6 +10,7 @@ class CapacityDecision:
     reason: str
     total_tokens_after: float
     mentalist_tokens_after: float
+    budget_authorized: bool = True
 
 
 class CausalCapacityController:
@@ -23,6 +24,11 @@ class CausalCapacityController:
     - Mentalist tokens refill at 0.01 per arriving transaction;
     - small burst capacities absorb short legitimate spikes;
     - v0.5 REVIEW is always authorized, even if that temporarily exceeds budget.
+
+    For the product runtime, a frozen-threshold Mentalist-positive case can be
+    admitted with ``enforce_budget=False``. In that mode capacity remains an
+    observable operating constraint rather than silently vetoing strong evidence.
+    Any reserve/total-budget overflow is tracked explicitly in telemetry.
 
     No labels, future rows or test outcomes are consumed by this controller.
     """
@@ -71,6 +77,7 @@ class CausalCapacityController:
         self.mandatory_review_overflow = 0
         self.capacity_denials = 0
         self.mentalist_capacity_denials = 0
+        self.mentalist_budget_overflow = 0
         self.mentalist_invoked = 0
         self.mentalist_bypassed = 0
 
@@ -113,6 +120,7 @@ class CausalCapacityController:
             ),
             total_tokens_after=self.total_tokens,
             mentalist_tokens_after=self.mentalist_tokens,
+            budget_authorized=consumed,
         )
 
     def authorize_v5_verify(self) -> CapacityDecision:
@@ -124,6 +132,7 @@ class CausalCapacityController:
                 reason="V5_VERIFY_CAPACITY_AUTHORIZED",
                 total_tokens_after=self.total_tokens,
                 mentalist_tokens_after=self.mentalist_tokens,
+                budget_authorized=True,
             )
         self.capacity_denials += 1
         return CapacityDecision(
@@ -131,25 +140,61 @@ class CausalCapacityController:
             reason="V5_VERIFY_CAPACITY_DEFERRED",
             total_tokens_after=self.total_tokens,
             mentalist_tokens_after=self.mentalist_tokens,
+            budget_authorized=False,
         )
 
-    def authorize_mentalist_verify(self) -> CapacityDecision:
+    def authorize_mentalist_verify(self, *, enforce_budget: bool = True) -> CapacityDecision:
+        """Authorize a frozen-threshold Jane promotion.
+
+        ``enforce_budget=True`` preserves the strict streaming-budget behavior used
+        by capacity-policy tests. The live product calls this with False: a strong
+        Jane case still becomes VERIFY, while any budget overflow is surfaced as
+        telemetry instead of being converted back to ALLOW.
+        """
         if self.total_tokens + 1e-12 < 1.0:
-            self.capacity_denials += 1
-            self.mentalist_capacity_denials += 1
+            if enforce_budget:
+                self.capacity_denials += 1
+                self.mentalist_capacity_denials += 1
+                return CapacityDecision(
+                    authorized=False,
+                    reason="MENTALIST_TOTAL_CAPACITY_DEFERRED",
+                    total_tokens_after=self.total_tokens,
+                    mentalist_tokens_after=self.mentalist_tokens,
+                    budget_authorized=False,
+                )
+            self.mentalist_budget_overflow += 1
+            self.interventions_authorized += 1
+            self.mentalist_authorized += 1
             return CapacityDecision(
-                authorized=False,
-                reason="MENTALIST_TOTAL_CAPACITY_DEFERRED",
+                authorized=True,
+                reason="MENTALIST_PROACTIVE_TOTAL_BUDGET_OVERFLOW",
                 total_tokens_after=self.total_tokens,
                 mentalist_tokens_after=self.mentalist_tokens,
+                budget_authorized=False,
             )
+
         if self.mentalist_tokens + 1e-12 < 1.0:
-            self.mentalist_capacity_denials += 1
+            if enforce_budget:
+                self.mentalist_capacity_denials += 1
+                return CapacityDecision(
+                    authorized=False,
+                    reason="MENTALIST_RESERVE_DEFERRED",
+                    total_tokens_after=self.total_tokens,
+                    mentalist_tokens_after=self.mentalist_tokens,
+                    budget_authorized=False,
+                )
+            # The global budget still has room, so consume one total token while
+            # recording that the dedicated Mentalist reserve was exceeded.
+            self.total_tokens = max(self.total_tokens - 1.0, 0.0)
+            self.mentalist_budget_overflow += 1
+            self.interventions_authorized += 1
+            self.mentalist_authorized += 1
             return CapacityDecision(
-                authorized=False,
-                reason="MENTALIST_RESERVE_DEFERRED",
+                authorized=True,
+                reason="MENTALIST_PROACTIVE_RESERVE_OVERFLOW",
                 total_tokens_after=self.total_tokens,
                 mentalist_tokens_after=self.mentalist_tokens,
+                budget_authorized=False,
             )
 
         self.total_tokens = max(self.total_tokens - 1.0, 0.0)
@@ -161,6 +206,7 @@ class CausalCapacityController:
             reason="MENTALIST_CAPACITY_AUTHORIZED",
             total_tokens_after=self.total_tokens,
             mentalist_tokens_after=self.mentalist_tokens,
+            budget_authorized=True,
         )
 
     def snapshot(self) -> dict[str, Any]:
@@ -186,4 +232,5 @@ class CausalCapacityController:
             "mandatory_review_overflow": self.mandatory_review_overflow,
             "capacity_denials": self.capacity_denials,
             "mentalist_capacity_denials": self.mentalist_capacity_denials,
+            "mentalist_budget_overflow": self.mentalist_budget_overflow,
         }
