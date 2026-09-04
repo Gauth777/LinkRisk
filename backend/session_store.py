@@ -1,8 +1,9 @@
-"""Durable local session journal for the LinkRisk demo runtime.
+"""Durable session journal for the LinkRisk demo runtime.
 
-The live engine remains the source of truth for scoring. This module persists the
-minimal sequence of causal inputs needed to deterministically replay the session
-on FastAPI restart. It deliberately does not pickle model/runtime internals.
+The live engine remains the source of truth for scoring. A local JSONL journal is
+always maintained; when server-side Supabase credentials are configured, the same
+causal event sequence is mirrored remotely and can be replayed after a backend
+restart. Model/runtime internals are never pickled.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping
 
+from backend.supabase_store import SupabaseMerchantStore, SupabaseStoreError
 from linkrisk.live_engine import LiveTransactionInput
 
 
@@ -32,13 +34,14 @@ def default_session_path(root: Path) -> Path:
 
 
 class LocalSessionStore:
-    """Append-only JSONL journal for one local LinkRisk demonstration session."""
+    """Append-only local journal with optional private Supabase mirroring."""
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self._lock = Lock()
+        self.remote = SupabaseMerchantStore()
 
-    def _append(self, event_type: str, payload: Mapping[str, Any]) -> None:
+    def _append_local(self, event_type: str, payload: Mapping[str, Any]) -> None:
         event = {
             "version": SCHEMA_VERSION,
             "type": event_type,
@@ -54,6 +57,20 @@ class LocalSessionStore:
                     os.fsync(handle.fileno())
         except OSError as exc:
             raise SessionStoreError(f"Could not persist LinkRisk session: {exc}") from exc
+
+    def _mirror(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        if not self.remote.enabled:
+            return
+        try:
+            self.remote.append_event(event_type, payload)
+        except SupabaseStoreError:
+            # Remote persistence is additive. A temporary DB outage must not make
+            # a scored/verified payment fail or corrupt the local causal journal.
+            pass
+
+    def _append(self, event_type: str, payload: Mapping[str, Any]) -> None:
+        self._append_local(event_type, payload)
+        self._mirror(event_type, payload)
 
     def append_transaction(self, record: Mapping[str, Any]) -> None:
         event = record.get("input")
@@ -76,14 +93,18 @@ class LocalSessionStore:
         )
 
     def append_adjudication(self, transaction_id: str, outcome: str, recorded_at: float) -> None:
-        self._append(
-            "adjudication",
-            {
-                "transaction_id": transaction_id,
-                "outcome": outcome.strip().lower(),
-                "recorded_at": float(recorded_at),
-            },
-        )
+        normalized = outcome.strip().lower()
+        payload = {
+            "transaction_id": transaction_id,
+            "outcome": normalized,
+            "recorded_at": float(recorded_at),
+        }
+        self._append("adjudication", payload)
+        if self.remote.enabled:
+            try:
+                self.remote.upsert_adjudication(transaction_id, normalized, float(recorded_at))
+            except SupabaseStoreError:
+                pass
 
     def append_clear_adjudication(self, transaction_id: str) -> None:
         self._append("clear_adjudication", {"transaction_id": transaction_id})
@@ -100,7 +121,7 @@ class LocalSessionStore:
     def append_clock(self, clock: float) -> None:
         self._append("clock", {"clock": float(clock)})
 
-    def events(self) -> list[dict[str, Any]]:
+    def _local_events(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
         try:
@@ -130,19 +151,44 @@ class LocalSessionStore:
             events.append(event)
         return events
 
+    def events(self) -> list[dict[str, Any]]:
+        # Remote history is authoritative when configured because Render/local
+        # filesystems may be ephemeral. Fall back to the local journal on any
+        # remote outage so the live demo remains available.
+        if self.remote.enabled:
+            try:
+                remote_events = self.remote.events()
+                if remote_events:
+                    return remote_events
+            except SupabaseStoreError:
+                pass
+        return self._local_events()
+
     def has_events(self) -> bool:
         return bool(self.events())
 
     def status(self) -> dict[str, Any]:
-        events = self.events()
+        local_events = self._local_events()
+        remote_status = self.remote.status()
+        try:
+            effective_events = self.events()
+        except SessionStoreError:
+            effective_events = local_events
         return {
             "enabled": True,
-            "event_count": len(events),
-            "transaction_count": sum(1 for event in events if event.get("type") == "transaction"),
+            "event_count": len(effective_events),
+            "transaction_count": sum(1 for event in effective_events if event.get("type") == "transaction"),
             "journal_exists": self.path.exists(),
+            "source": "supabase" if self.remote.enabled and remote_status.get("healthy") else "local",
+            "merchant_memory": remote_status,
         }
 
     def clear(self) -> None:
+        """Clear only the disposable local/runtime journal.
+
+        Persistent merchant memory is intentionally not deleted by a public UI
+        reset. This prevents a demo visitor from erasing historical risk context.
+        """
         try:
             with self._lock:
                 if self.path.exists():
@@ -151,12 +197,7 @@ class LocalSessionStore:
             raise SessionStoreError(f"Could not clear LinkRisk session: {exc}") from exc
 
     def replay(self, engine: Any, razorpay_state: Any | None = None) -> int:
-        """Rebuild engine causal state from the persisted event sequence.
-
-        Transaction decisions are recomputed at their original timestamps using
-        the frozen models. This restores both visible records and the historical
-        state required by Mentalist's causal windows.
-        """
+        """Rebuild engine causal state from the persisted event sequence."""
         events = self.events()
         replayed = 0
         for event in events:
