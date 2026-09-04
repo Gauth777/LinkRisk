@@ -39,6 +39,12 @@ export type CaseRecord = {
     clue_count: number
     min_clue_families: number
     clue_families: Record<string, boolean>
+    invoked?: boolean
+    bypassed?: boolean
+    bypass_reason?: string | null
+    candidate?: boolean
+    capacity_authorized?: boolean
+    below_baseline_review_boundary?: boolean
     promoted_by_jane: boolean
     displaced_v5_verify: boolean
     uses_confirmed_fraud_as_input: boolean
@@ -70,6 +76,8 @@ export type CaseRecord = {
     trusted_history_channels: number
     trusted_fraud_channels: number
     trusted_fraud_evidence_present: boolean
+    analyst_jane_requested?: boolean
+    analyst_jane_assessment?: string
   }
   network: { nodes: NetworkNode[]; edges: NetworkEdge[] }
   adjudication?: {
