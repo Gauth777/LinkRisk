@@ -1,24 +1,80 @@
 # LinkRisk
 
-**Proactive payment-risk investigation: detect the pattern before the profile becomes known fraud.**
+**Relationship-aware payment fraud detection and defensive verification.**
 
 Razorpay AI Buildathon — Track 2: **AI Risk Manager**
 
 **Live demo:** https://linkrisk.onrender.com/
 
+## Track 2 fit
+
+Razorpay asks for a working defensive detector, verifier or auto-responder for one class of loss, with measured precision and recall on a held-out test set and honest false-positive cost.
+
+LinkRisk targets one loss class:
+
+> **Coordinated payment fraud that can look ordinary when transactions are scored independently.**
+
+The product separates a measured hard fraud detector from a broader defensive verification layer:
+
+```text
+ALLOW
+  no sufficient evidence for intervention
+
+VERIFY
+  additional verification / investigation is warranted
+  not a fraud-positive verdict
+
+REVIEW
+  frozen hard detector positive
+  high-priority risk review
+```
+
+The complete metric/claim contract is frozen in [`docs/SUBMISSION_CONTRACT.md`](docs/SUBMISSION_CONTRACT.md).
+
+## Headline held-out detector result
+
+The **frozen v0.5 hard REVIEW boundary** is LinkRisk's official metric-bearing detector. It remains unchanged inside the deployed product.
+
+The one-shot chronological held-out partition contained **88,581 transactions** with **3,083 frauds (3.48%)**. Models and thresholds were frozen before the test labels were opened.
+
+| Frozen hard detector | Precision | Recall | PR-AUC | FPR |
+| --- | ---: | ---: | ---: | ---: |
+| Transaction-only baseline | 49.81% | 21.08% | 0.2873 | 0.7661% |
+| **LinkRisk v0.5 hard REVIEW** | **49.10%** | **23.09%** | **0.3132** | **0.8632%** |
+
+The relationship/trusted-memory layer therefore increased hard-detector recall from **21.08% → 23.09%** and PR-AUC from **0.2873 → 0.3132** while retaining approximately 49% precision.
+
+**Important:** these are population-level held-out metrics. LinkRisk scores are ranking/risk scores, not calibrated fraud probabilities.
+
+## Why VERIFY exists
+
+Fraud operations should not force every suspicious case into an approve/decline binary.
+
+LinkRisk uses `VERIFY` as an intermediate defensive action for transactions that deserve additional verification or investigation but have not crossed the hard `REVIEW` detector boundary.
+
+This lets Jane/Mentalist surface suspicious relationship patterns without claiming every flagged payment is fraud.
+
+The broader final v1 operational queue (`VERIFY + REVIEW`) was also measured honestly on the same held-out partition:
+
+- precision: **17.44%**
+- fraud capture / recall: **38.50%**
+- FPR: **6.5744%**
+- intervention share: **7.69%**
+- TP / FP / TN / FN: **1,187 / 5,621 / 79,877 / 1,896**
+
+That lower precision describes an intentionally broader intervention queue, **not** the precision of the hard fraud detector.
+
 ## What LinkRisk does
 
-A payment can look ordinary in isolation while its short-horizon behavior, relationship history and surrounding context form a suspicious case. LinkRisk therefore does not rely on one monolithic fraud score.
+A payment can look ordinary in isolation while its short-horizon behavior, relationship history and surrounding context form a suspicious case. LinkRisk therefore keeps three evidence channels separate:
 
-It keeps three evidence channels separate:
-
-1. **Transaction intelligence** — a frozen XGBoost transaction-risk baseline.
-2. **Trusted relationship memory** — causal relationship features plus delayed adjudicated fraud/legitimate feedback from v0.5.
+1. **Transaction intelligence** — frozen XGBoost transaction-risk baseline.
+2. **Trusted relationship memory** — causal relationship features plus delayed adjudicated fraud/legitimate feedback.
 3. **Mentalist proactive deduction (“Jane”)** — present-tense velocity, behavior-change, coordination and reuse/churn evidence that does **not** consume confirmed-fraud labels.
 
-Historical fraud is evidence, never automatic guilt. Scores are ranking/risk scores, not calibrated fraud probabilities.
+Historical fraud is evidence, never automatic guilt.
 
-> **Jane** is the deliberately playful internal name for the Mentalist investigator: the component that looks for a constellation of weak clues before a profile is already known fraud.
+> **Jane** is the deliberately playful internal name for the proactive investigator that looks for a constellation of weak clues before a profile is already known fraud.
 
 ## Product architecture
 
@@ -29,83 +85,82 @@ Razorpay Test payment + merchant telemetry
           Transaction baseline
                     │
                     ▼
-       Trusted-memory v0.5 layer
+       Trusted-memory v0.5 risk
                     │
           ┌─────────┴─────────┐
           │                   │
-   mandatory REVIEW      other traffic
-   remains immutable          │
-                              ▼
-                     Cheap evidence gate
-                       /             \
-               ordinary             evidence-bearing
-                  │                        │
-                  │                        ▼
-                  │                  Jane / Mentalist
-                  │                  investigator
-                  │                        │
-                  └─────────────┬──────────┘
-                                ▼
-                      Cost-aware v2 router
-                 frozen thresholds + live capacity
-                                │
-                     ┌──────────┼──────────┐
-                     ▼          ▼          ▼
-                   ALLOW      VERIFY     REVIEW
+   hard REVIEW boundary    other traffic
+   measured detector          │
+          │                   ▼
+          │           cheap evidence gate
+          │              /          \
+          │         ordinary      evidence-bearing
+          │             │              │
+          │             │              ▼
+          │             │        Jane / Mentalist
+          │             │        investigator
+          │             │              │
+          └─────────────┴──────┬───────┘
+                               ▼
+                     operational routing
+                               │
+                    ┌──────────┼──────────┐
+                    ▼          ▼          ▼
+                  ALLOW      VERIFY     REVIEW
 ```
 
-The live v2 runtime uses **selective inference** and causal/stateful capacity accounting:
+The live product preserves the frozen hard `REVIEW` detector and adds operational capabilities around it:
 
-- sustained total intervention rate: **6%**;
-- sustained Mentalist reserve: **1%**;
-- bounded cold-start burst capacity;
-- v0.5 REVIEW is mandatory and is never downgraded because capacity is exhausted;
-- Mentalist is invoked only for eligible evidence-bearing cases rather than every transaction.
+- selective Jane inference;
+- defensive VERIFY routing;
+- analyst-requested Jane second opinions;
+- explicit operator escalation;
+- causal relationship visualization;
+- delayed merchant adjudication memory;
+- persistent Supabase-backed operational ledger;
+- Razorpay Test Mode checkout and verification;
+- intervention/capacity telemetry.
 
-The buildathon product surface is `frontend/` + `backend/api.py`. `app.py` remains an engineering/debug console.
+A Jane-positive automatic case is not silently downgraded to `ALLOW` solely because a tiny streaming reserve is exhausted. Capacity overflow remains observable as telemetry rather than vetoing strong frozen-threshold evidence.
 
-## Why selective reasoning?
+## Evaluation boundary
 
-The development experiment showed that Mentalist did not need to run on most traffic:
+### Frozen held-out detector
 
-- Mentalist invoked: **2.27%**
-- Mentalist bypassed: **97.73%**
-- intervention held at **6.00%**
+The v0.5 hard `REVIEW` detector is the headline measured detector because it is unchanged in the current stack and has untouched held-out precision/recall/FPR.
+
+### Final v1 operational policy
+
+The original Mentalist-routed `VERIFY + REVIEW` policy was evaluated once on the same chronological held-out set. Its broader fraud-capture/false-positive trade-off is reported above and in [`docs/evaluation_results.md`](docs/evaluation_results.md).
+
+### v2 operational engineering
+
+v2 was designed only after the v1 held-out results exposed intervention-capacity drift. The old final set is therefore spent and is **not** reused as an unbiased v2 test.
+
+Development validation for the cost-aware selective design showed:
+
+- intervention: **6.00% → 6.00%**
 - precision: **24.37% → 25.31%**
 - fraud capture: **42.57% → 44.21%**
 - FPR: **4.6973% → 4.6412%**
 - TP / FP delta: **+50 / −48**
+- Mentalist invoked: **2.27%**
+- Mentalist bypassed: **97.73%**
 
-This is **development validation**, not a new held-out claim.
+These are **development-validation metrics only**, not a new held-out claim.
 
-## Evaluation status
+## False-positive cost
 
-### v1.0 final chronological held-out evaluation — opened once, frozen
+LinkRisk does not hide legitimate-customer friction.
 
-The one-shot held-out partition contained **88,581 transactions** with **3,083 frauds (3.48%)**. No fitting or threshold selection occurred on this test partition.
+- A false positive at the hard `REVIEW` detector is a legitimate transaction escalated to high-priority risk review.
+- A false positive in `VERIFY` is generally an unnecessary verification/investigation step, not necessarily an automatic decline.
 
-| System | Precision | Recall / capture | PR-AUC | FPR | Intervention |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Transaction baseline hard detector | 49.81% | 21.08% | 0.2873 | 0.7661% | — |
-| v0.5 hard REVIEW | 49.10% | 23.09% | 0.3132 | 0.8632% | — |
-| Stable v0.5 operational | 21.64% | 35.61% | — | 4.6516% | 5.73% |
-| Final v1.0 Mentalist-routed | 17.44% | 38.50% | — | 6.5744% | 7.69% |
-
-Final v1.0 confusion matrix: **TP / FP / TN / FN = 1,187 / 5,621 / 79,877 / 1,896**.
-
-Mentalist produced a net **+89 frauds captured** over stable v0.5, but validation-calibrated routing expanded intervention from **5.73% to 7.69%** under later temporal traffic. That capacity drift is treated as a real temporal policy-calibration finding, not tuned away on the same held-out set.
-
-**The v1.0 held-out result is final and is not reused for v2 tuning.**
-
-### v2 cost-aware selective investigation — development validation only
-
-v2 was designed after observing the v1.0 capacity drift. The old final set is therefore spent and is not relabelled as an unbiased v2 evaluation.
-
-See [`docs/evaluation_results.md`](docs/evaluation_results.md) for the complete evaluation ledger.
+The final one-shot evaluator also includes false-positive cost sensitivity scenarios. See [`docs/evaluation_results.md`](docs/evaluation_results.md).
 
 ## Challengers we rejected
 
-More sophisticated was not automatically better. Post-final-test experiments stayed development-only and were rejected when they failed to improve the frozen baseline.
+More sophisticated was not automatically better. Post-final-test experiments stayed development-only and were rejected when they failed to earn their complexity.
 
 | Challenger | Development result | Decision |
 | --- | --- | --- |
@@ -113,16 +168,14 @@ More sophisticated was not automatically better. Post-final-test experiments sta
 | Heterogeneous GraphSAGE | Same-slice PR-AUC **0.1452** vs baseline **0.4019** | **REJECT** |
 | Causal graph-feature + XGBoost fusion | PR-AUC **0.3613** vs same-slice frozen baseline **0.4019**; also lost recall | **REJECT** |
 
-The conclusion is intentionally conservative: on the tested IEEE-CIS development protocols, these challengers did not earn their additional complexity. The useful gains came from **trusted delayed evidence, selective behavioral reasoning and capacity-aware routing**.
+The useful gains came from **trusted delayed evidence, selective behavioral reasoning and explicit risk operations**, not from adding complexity for its own sake.
 
 ## Razorpay Test Mode integration
 
 The deployed demo uses Razorpay **Test Mode**. No real money is involved.
 
-The primary checkout path is:
-
 ```text
-merchant telemetry
+merchant context
       ↓
 POST /api/integrations/razorpay/orders
       ↓
@@ -141,33 +194,26 @@ order + amount + currency + status checks
 LinkRisk scoring → ALLOW / VERIFY / REVIEW
 ```
 
-The backend also implements an **optional signed webhook ingestion path** at:
+The backend also implements an optional signed Razorpay webhook ingestion path at `POST /api/webhooks/razorpay`.
 
-```text
-POST /api/webhooks/razorpay
-```
+Razorpay's standard Payment entity does not expose all browser/device/session context used by LinkRisk. Additional context comes from merchant-observed telemetry. LinkRisk does not invent payer IP or reinterpret masked IEEE fields as literal identities.
 
-When configured, it:
+## Privacy and merchant identity
 
-- verifies `X-Razorpay-Signature` over the exact raw request body;
-- accepts `payment.authorized` and `payment.captured`;
-- deduplicates events and Razorpay payment IDs;
-- normalizes payment metadata into the current runtime adapter.
+Persistent operational data is server-side only. Raw email/contact values are not stored in the risk tables; stable HMAC tokens and masked display values are used instead.
 
-The public buildathon deployment currently relies on the working checkout-verification path; webhook support exists in code but is not required for the demo.
-
-Razorpay's standard Payment entity does not expose all browser/device/session context needed by LinkRisk. That context comes from merchant-observed telemetry. LinkRisk does not invent payer IP or reinterpret masked IEEE fields as literal identities.
+Missing device/browser context is not collapsed into one fake shared identity, because doing so would fabricate relationship evidence.
 
 ## Run locally
 
-### 1. API
+### API
 
 ```bash
 python -m pip install -r requirements.txt
 uvicorn backend.api:app --reload --port 8000
 ```
 
-### 2. React product UI
+### React product UI
 
 ```bash
 cd frontend
@@ -175,11 +221,11 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL (normally `http://localhost:5173`). Vite proxies `/api` to FastAPI.
+Open the Vite URL, normally `http://localhost:5173`. Vite proxies `/api` to FastAPI.
 
 ## Environment variables
 
-For Razorpay Test Mode checkout:
+Razorpay Test Mode checkout:
 
 ```text
 RAZORPAY_KEY_ID=rzp_test_...
@@ -192,6 +238,20 @@ Optional webhook verification:
 RAZORPAY_WEBHOOK_SECRET=...
 ```
 
+Persistent merchant memory:
+
+```text
+SUPABASE_URL=...
+SUPABASE_SECRET_KEY=...
+LINKRISK_IDENTITY_SECRET=...
+```
+
+Optional operator protection:
+
+```text
+LINKRISK_ADMIN_TOKEN=...
+```
+
 Cloud model-bundle bootstrap:
 
 ```text
@@ -199,7 +259,7 @@ LINKRISK_MODEL_BUNDLE_URL=<https URL to frozen ZIP>
 LINKRISK_MODEL_BUNDLE_SHA256=<SHA-256 of that ZIP>
 ```
 
-Never expose API secrets or webhook secrets to the browser or repository.
+Never expose server secrets to the browser or repository.
 
 ## Frozen runtime assets
 
@@ -248,10 +308,11 @@ python scripts/evaluate_gnn_signal_feasibility.py
 python scripts/evaluate_graph_xgb_fusion.py
 ```
 
-Do **not** rerun or retune against the old v1.0 final held-out partition.
+Do **not** rerun or retune against the already-opened v1 held-out partition.
 
 ## Safety and evaluation guardrails
 
+- Defense-only payment-risk functionality.
 - Same-timestamp transactions cannot see one another.
 - Point-in-time relationship features use only information available before the current decision.
 - Mentalist proactive features consume no confirmed-fraud labels.
@@ -260,17 +321,21 @@ Do **not** rerun or retune against the old v1.0 final held-out partition.
 - Correlated signals do not count as independent evidence families.
 - Confidence means independent evidence support, not fraud probability.
 - Model scores are ranking/risk scores, not calibrated probabilities.
-- v1.0 final held-out evaluation is immutable.
-- v2 and all later challengers remain labelled development validation until evaluated on a new untouched source.
+- v1 held-out evaluation is immutable.
+- v2 and later post-test orchestration changes remain labelled development/operational engineering until evaluated on a new untouched source.
 
 ## Project status
 
 - ✅ Frozen transaction baseline
+- ✅ Measured relationship-aware hard REVIEW detector
+- ✅ One-shot chronological held-out precision / recall / FPR
 - ✅ Trusted delayed-memory specialist
-- ✅ Jane / Mentalist selective investigator
-- ✅ Cost-aware v2 live router
+- ✅ Jane / Mentalist investigator
+- ✅ Defensive VERIFY workflow
+- ✅ Analyst Jane escalation
 - ✅ React + FastAPI product UI
 - ✅ Razorpay Test Mode checkout + server verification
+- ✅ Supabase-backed persistent operational ledger
 - ✅ Render deployment
 - ✅ Rejected-challenger ledger
-- ⏳ New untouched evaluation source for unbiased v2 generalization
+- ⏳ New untouched evaluation source for unbiased post-v1 orchestration generalization
