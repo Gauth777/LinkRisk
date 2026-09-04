@@ -8,6 +8,7 @@ import {
   TimerReset, UserRoundSearch, UsersRound, X, Zap,
 } from 'lucide-react'
 import { api } from './api'
+import { ProtectionPanel } from './ProtectionPanel'
 import { previewCase, previewFeed, previewOverview } from './demoData'
 import type { Action, CaseRecord, FeedItem, NetworkNode, OverviewPayload } from './types'
 
@@ -435,6 +436,8 @@ function InvestigationPage({
       <ScorePanel label="v0.5 risk" value={record.decision.linkrisk_risk} description="Transaction + trusted memory" tone="amber" />
       <ScorePanel label="Mentalist" value={mentalist?.score} description="Present-tense evidence ranking" tone="purple" />
     </section>
+
+    <ProtectionPanel record={record} preview={preview} />
 
     <section className="investigation-grid">
       <div className="card case-evidence-card">
