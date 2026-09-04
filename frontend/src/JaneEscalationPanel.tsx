@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, BrainCircuit, Check, RefreshCw, SearchCheck, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BrainCircuit, Check, Clock3, Database, RefreshCw, SearchCheck, ShieldCheck, Sparkles } from 'lucide-react'
 import { api } from './api'
 import type { CaseRecord } from './types'
 import './jane-escalation.css'
@@ -31,6 +31,24 @@ export function JaneEscalationPanel({
   const visibleClueCount = analyst?.clue_count ?? record.mentalist?.clue_count ?? 0
   const threshold = analyst?.score_threshold ?? record.mentalist?.score_threshold ?? null
   const corroborates = analyst?.corroborates_intervention ?? false
+  const adjudication = record.adjudication
+  const outcome = adjudication?.outcome ?? null
+  const memoryState = adjudication?.state ?? 'unadjudicated'
+  const remainingHours = adjudication?.seconds_remaining == null
+    ? null
+    : Math.max(0, Math.ceil(adjudication.seconds_remaining / 3600))
+
+  const janeLifecycle = analyst
+    ? 'Analyst second opinion'
+    : automatic
+      ? 'Automatic investigation'
+      : 'Available on demand'
+  const analystLifecycle = outcome ? `Confirmed ${outcome}` : 'Awaiting resolution'
+  const memoryLifecycle = memoryState === 'matured'
+    ? 'Trusted memory active'
+    : memoryState === 'pending'
+      ? `${remainingHours ?? 0}h until trusted`
+      : 'Waiting for outcome'
 
   const runJane = async () => {
     setLoading(true)
@@ -103,5 +121,23 @@ export function JaneEscalationPanel({
     </div>}
 
     {error && <div className="jane-escalation-error"><AlertTriangle size={17} />{error}</div>}
+
+    <div className="risk-ops-loop">
+      <div className="risk-ops-loop-head">
+        <div><span className="eyebrow">Adaptive merchant memory</span><b>One case becomes context for the next.</b></div>
+        <small>Resolved outcomes mature after the causal delay before they can influence future related payments.</small>
+      </div>
+      <div className="risk-ops-loop-steps">
+        <div className="risk-loop-step complete"><span>1</span><b>PAYMENT</b><small>Received & scored</small></div>
+        <ArrowRight size={17} />
+        <div className="risk-loop-step complete"><span>2</span><b>DECISION</b><small>{record.decision.action}</small></div>
+        <ArrowRight size={17} />
+        <div className={`risk-loop-step ${automatic || analyst ? 'complete' : ''}`}><span>3</span><b>JANE</b><small>{janeLifecycle}</small></div>
+        <ArrowRight size={17} />
+        <div className={`risk-loop-step ${outcome ? 'complete' : ''}`}><span>4</span><b>RESOLVE</b><small>{analystLifecycle}</small></div>
+        <ArrowRight size={17} />
+        <div className={`risk-loop-step ${memoryState === 'matured' ? 'complete memory' : ''}`}><span>{memoryState === 'matured' ? <Database size={15} /> : <Clock3 size={15} />}</span><b>MEMORY</b><small>{memoryLifecycle}</small></div>
+      </div>
+    </div>
   </section>
 }
