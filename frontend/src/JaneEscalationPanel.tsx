@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, ArrowRight, BrainCircuit, Check, ChevronDown, ChevronUp, Clock3, Database, Network, RefreshCw, SearchCheck, ShieldCheck, Sparkles } from 'lucide-react'
+import { AlertTriangle, ArrowRight, BrainCircuit, Check, Clock3, Database, Network, RefreshCw, SearchCheck, ShieldCheck, Sparkles } from 'lucide-react'
 import { api } from './api'
 import { JaneEvidenceGraph } from './JaneEvidenceGraph'
 import type { CaseRecord } from './types'
@@ -134,11 +134,14 @@ export function JaneEscalationPanel({
       </span>)}
     </div>}
 
-    {(analyst || automatic) && <div className="jane-evidence-toggle-wrap">
-      <button className={`jane-evidence-toggle ${showEvidence ? 'active' : ''}`} onClick={() => setShowEvidence((value) => !value)}>
-        <Network size={17} />
-        <span><b>{showEvidence ? 'Hide supporting relationships' : 'View supporting relationships'}</b><small>Inspect the transaction-time causal evidence behind Jane’s active clue families</small></span>
-        {showEvidence ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+    {(analyst || automatic) && <div className="jane-escalation-callout">
+      <Network size={22} />
+      <div>
+        <b>Relationship evidence</b>
+        <span>Inspect the transaction-time causal network supporting Jane’s active clue families. Individual edges are shown as evidence context, not claimed as standalone model attribution.</span>
+      </div>
+      <button onClick={() => setShowEvidence((value) => !value)}>
+        <Network size={18} />{showEvidence ? 'Hide evidence' : 'View evidence'}
       </button>
     </div>}
 
