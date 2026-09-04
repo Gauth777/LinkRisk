@@ -10,6 +10,7 @@ type Capacity = {
   mentalist_invocation_share: number
   capacity_denials: number
   mandatory_review_overflow: number
+  mentalist_budget_overflow?: number
 }
 
 type Overview = {
@@ -61,6 +62,7 @@ export default function LiveEfficiencyStrip() {
   const tokens = capacity?.total_tokens ?? 6
   const burst = capacity?.total_burst ?? 6
   const deepCheckLabel = liveSeen > 0 ? `${invoked}/${liveSeen}` : pct(developmentInvocation)
+  const janeOverflow = capacity?.mentalist_budget_overflow ?? 0
 
   return <aside className="live-efficiency-strip" aria-label="Selective reasoning telemetry">
     <div className="efficiency-heading">
@@ -74,12 +76,13 @@ export default function LiveEfficiencyStrip() {
     <div className="efficiency-metrics">
       <div><strong>{pct(liveBypassShare)}</strong><span>reasoning bypass</span></div>
       <div><strong>{deepCheckLabel}</strong><span>{liveSeen > 0 ? 'deep checks' : 'invocation rate'}</span></div>
-      <div><strong>{pct(sustainedBudget)}</strong><span>sustained budget</span></div>
+      <div><strong>{pct(sustainedBudget)}</strong><span>budget reference</span></div>
       <div><strong>{tokens.toFixed(1)}/{burst.toFixed(0)}</strong><span>live capacity</span></div>
     </div>
 
-    {(!!capacity?.capacity_denials || !!capacity?.mandatory_review_overflow) && <div className="efficiency-alerts">
+    {(!!capacity?.capacity_denials || !!capacity?.mandatory_review_overflow || !!janeOverflow) && <div className="efficiency-alerts">
       {!!capacity?.capacity_denials && <span>{capacity.capacity_denials} deferred</span>}
+      {!!janeOverflow && <span>{janeOverflow} Jane budget overflow</span>}
       {!!capacity?.mandatory_review_overflow && <span>{capacity.mandatory_review_overflow} safety overflow</span>}
     </div>}
   </aside>
