@@ -1,20 +1,36 @@
 .submission-metrics {
   margin: 14px 22px 0;
-  padding: 14px 16px;
+  padding: 14px 16px 12px;
   border: 1px solid rgba(103, 232, 249, 0.22);
   border-radius: 16px;
-  background: linear-gradient(135deg, rgba(7, 20, 33, 0.94), rgba(13, 28, 43, 0.88));
+  background: linear-gradient(135deg, rgba(7, 20, 33, 0.95), rgba(13, 28, 43, 0.9));
   display: grid;
-  grid-template-columns: minmax(230px, 1.25fr) minmax(360px, 1.5fr) minmax(340px, 1.5fr);
-  gap: 18px;
-  align-items: center;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+  align-items: stretch;
   box-shadow: 0 10px 30px rgba(2, 8, 23, 0.22);
+}
+
+.submission-lane {
+  padding: 12px;
+  border-radius: 13px;
+  background: rgba(15, 23, 42, 0.48);
+  border: 1px solid rgba(148, 163, 184, 0.11);
+}
+
+.detector-lane {
+  border-color: rgba(103, 232, 249, 0.18);
+}
+
+.jane-lane {
+  border-color: rgba(192, 132, 252, 0.2);
 }
 
 .submission-metrics-head {
   display: flex;
   gap: 11px;
   align-items: center;
+  margin-bottom: 10px;
 }
 
 .submission-shield {
@@ -26,6 +42,11 @@
   background: rgba(34, 211, 238, 0.11);
   color: #67e8f9;
   flex: 0 0 auto;
+}
+
+.submission-shield.jane {
+  background: rgba(168, 85, 247, 0.12);
+  color: #d8b4fe;
 }
 
 .submission-metrics-head b {
@@ -40,42 +61,59 @@
   margin-top: 3px;
   color: #94a3b8;
   font-size: 11px;
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
-.submission-metric-values {
+.submission-metric-values,
+.jane-proof-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(78px, 1fr));
   gap: 8px;
 }
 
-.submission-metric-values div {
-  padding: 7px 9px;
+.submission-metric-values div,
+.jane-proof-grid div {
+  padding: 8px 9px;
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.62);
-  border: 1px solid rgba(148, 163, 184, 0.11);
+  background: rgba(2, 6, 23, 0.34);
+  border: 1px solid rgba(148, 163, 184, 0.09);
 }
 
-.submission-metric-values strong {
+.submission-metric-values strong,
+.jane-proof-grid strong {
   display: block;
   color: #e2e8f0;
   font-size: 14px;
 }
 
-.submission-metric-values span {
+.jane-proof-grid strong {
+  color: #e9d5ff;
+}
+
+.submission-metric-values span,
+.jane-proof-grid span {
   display: block;
   margin-top: 2px;
   color: #94a3b8;
-  font-size: 10px;
+  font-size: 9.5px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.045em;
+}
+
+.jane-proof-grid small {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 9px;
+  line-height: 1.3;
 }
 
 .submission-action-contract {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 8px;
-  justify-content: flex-end;
+  justify-content: center;
 }
 
 .submission-action-contract span {
@@ -93,12 +131,20 @@
   margin-right: 4px;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1320px) {
+  .submission-metric-values,
+  .jane-proof-grid {
+    grid-template-columns: repeat(2, minmax(100px, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
   .submission-metrics {
     grid-template-columns: 1fr;
   }
 
   .submission-action-contract {
+    grid-column: 1;
     justify-content: flex-start;
   }
 }
@@ -108,7 +154,8 @@
     margin: 10px 12px 0;
   }
 
-  .submission-metric-values {
+  .submission-metric-values,
+  .jane-proof-grid {
     grid-template-columns: repeat(2, minmax(100px, 1fr));
   }
 }
