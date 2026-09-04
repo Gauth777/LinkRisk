@@ -1,0 +1,114 @@
+.submission-metrics {
+  margin: 14px 22px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(103, 232, 249, 0.22);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(7, 20, 33, 0.94), rgba(13, 28, 43, 0.88));
+  display: grid;
+  grid-template-columns: minmax(230px, 1.25fr) minmax(360px, 1.5fr) minmax(340px, 1.5fr);
+  gap: 18px;
+  align-items: center;
+  box-shadow: 0 10px 30px rgba(2, 8, 23, 0.22);
+}
+
+.submission-metrics-head {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+}
+
+.submission-shield {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(34, 211, 238, 0.11);
+  color: #67e8f9;
+  flex: 0 0 auto;
+}
+
+.submission-metrics-head b {
+  display: block;
+  color: #f8fafc;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+.submission-metrics-head small {
+  display: block;
+  margin-top: 3px;
+  color: #94a3b8;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.submission-metric-values {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(78px, 1fr));
+  gap: 8px;
+}
+
+.submission-metric-values div {
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.62);
+  border: 1px solid rgba(148, 163, 184, 0.11);
+}
+
+.submission-metric-values strong {
+  display: block;
+  color: #e2e8f0;
+  font-size: 14px;
+}
+
+.submission-metric-values span {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.submission-action-contract {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  justify-content: flex-end;
+}
+
+.submission-action-contract span {
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.11);
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.submission-action-contract b {
+  color: #e2e8f0;
+  margin-right: 4px;
+}
+
+@media (max-width: 1180px) {
+  .submission-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .submission-action-contract {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 680px) {
+  .submission-metrics {
+    margin: 10px 12px 0;
+  }
+
+  .submission-metric-values {
+    grid-template-columns: repeat(2, minmax(100px, 1fr));
+  }
+}
