@@ -3,6 +3,7 @@ import App from './App'
 import DemoScenarios from './DemoScenarios'
 import LiveEfficiencyStrip from './LiveEfficiencyStrip'
 import LiveRuntimeStatus from './LiveRuntimeStatus'
+import { PersistentPaymentsPortal } from './PersistentPaymentsPortal'
 import './demoScenarios.css'
 import './v2Overrides.css'
 
@@ -20,6 +21,7 @@ export default function ProductRoot() {
       <LiveRuntimeStatus />
       <LiveEfficiencyStrip />
       <App />
+      <PersistentPaymentsPortal />
     </div> : <DemoScenarios onGoLive={() => setMode('live')} />}
   </>
 }
