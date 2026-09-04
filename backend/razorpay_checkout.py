@@ -22,6 +22,7 @@ from backend.razorpay_integration import (
     normalize_payment_to_live_input,
     verify_payment_signature,
 )
+from backend.supabase_store import SupabaseMerchantStore
 from linkrisk.live_engine import LiveLinkRiskEngine
 
 
@@ -76,6 +77,7 @@ def build_checkout_router(
     persist_transaction: Callable[[dict[str, Any]], None] | None = None,
 ) -> APIRouter:
     router = APIRouter()
+    merchant_store = SupabaseMerchantStore()
 
     @router.get("/api/integrations/razorpay/checkout/status")
     def checkout_status() -> dict[str, Any]:
@@ -86,6 +88,7 @@ def build_checkout_router(
             "test_mode": key_id.startswith("rzp_test_"),
             "key_id": key_id if key_id.startswith("rzp_test_") else None,
             "secret_exposed": False,
+            "merchant_memory": merchant_store.status(),
         }
 
     @router.post("/api/integrations/razorpay/orders", status_code=201)
@@ -200,9 +203,7 @@ def build_checkout_router(
         transaction_id = f"RZP-{request.razorpay_payment_id}"
 
         # Recover cleanly from a previous request that scored successfully but
-        # failed after scoring (for example while writing the optional journal).
-        # Without this guard, retrying the successful Razorpay payment would hit
-        # the engine's duplicate-transaction protection and surface as HTTP 500.
+        # failed after scoring (for example while writing optional persistence).
         try:
             record = engine.get_record(transaction_id)
             recovered = True
@@ -224,24 +225,40 @@ def build_checkout_router(
             telemetry=telemetry,
         )
 
-        # Binding is part of payment idempotency and should not depend on the
-        # demo journal being writable. Render's local filesystem is ephemeral;
-        # persistence failure must not turn a successfully verified and scored
-        # payment into a false checkout failure in the browser.
+        # Binding is part of payment idempotency and should not depend on either
+        # persistence layer being writable.
         state.bind_payment(request.razorpay_payment_id, transaction_id)
 
-        persistence_warning: str | None = None
+        warnings: list[str] = []
         if persist_transaction is not None and not recovered:
             try:
                 persist_transaction(record)
             except Exception as exc:
-                persistence_warning = f"{type(exc).__name__}: {exc}"
+                warnings.append(f"local journal: {type(exc).__name__}: {exc}")
+
+        # Persistent merchant intelligence is deliberately best-effort. A DB
+        # outage must never turn a successfully verified payment into a false
+        # checkout failure.
+        try:
+            if merchant_store.enabled:
+                merchant_store.upsert_payment(record, payment)
+                if not recovered:
+                    event_payload = {
+                        "transaction_id": str(record["transaction_id"]),
+                        "transaction_time": float(record["transaction_time"]),
+                        "input": asdict(record["input"]) if is_dataclass(record.get("input")) else dict(record.get("input") or {}),
+                        "integration": dict(record.get("integration") or {}),
+                    }
+                    merchant_store.append_event("transaction", event_payload)
+        except Exception as exc:
+            warnings.append(f"merchant memory: {type(exc).__name__}: {exc}")
 
         return {
             "verified": True,
             "duplicate_payment": recovered,
             "transaction": jsonable(record),
-            "persistence_warning": persistence_warning,
+            "persistence_warning": "; ".join(warnings) if warnings else None,
+            "merchant_memory_persisted": merchant_store.enabled and not any(w.startswith("merchant memory:") for w in warnings),
         }
 
     return router
