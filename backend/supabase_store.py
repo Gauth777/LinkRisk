@@ -12,6 +12,7 @@ from dataclasses import asdict, is_dataclass
 import hashlib
 import hmac
 import json
+import math
 import os
 from typing import Any, Mapping
 
@@ -33,6 +34,22 @@ def _normalise_contact(value: object) -> str:
 
 def _normalise_email(value: object) -> str:
     return str(value or "").strip().lower()
+
+
+def _finite_or_none(value: object) -> float | None:
+    """Return a JSON/Postgres-safe finite float, otherwise None.
+
+    Selective Mentalist inference intentionally uses NaN internally when Jane is
+    bypassed. ``requests`` rejects NaN/Inf in JSON, so operational persistence
+    must convert those non-values to SQL NULL without changing model behavior.
+    """
+    if value is None:
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if math.isfinite(numeric) else None
 
 
 def _token(secret: str, namespace: str, value: str) -> str | None:
@@ -169,6 +186,7 @@ class SupabaseMerchantStore:
         except (TypeError, ValueError):
             amount = float(event.get("amount") or 0)
 
+        jane_score = analyst.get("score", mentalist.get("score"))
         row = {
             "transaction_id": str(record["transaction_id"]),
             "razorpay_payment_id": str(payment.get("id") or "") or None,
@@ -181,10 +199,10 @@ class SupabaseMerchantStore:
             "device_info": str(event.get("device_info") or "") or None,
             "browser_context": str(event.get("browser_context") or "") or None,
             "device_type": str(event.get("device_type") or "") or None,
-            "baseline_risk": decision.get("baseline_risk"),
-            "linkrisk_risk": decision.get("linkrisk_risk"),
-            "graph_confidence": decision.get("graph_confidence"),
-            "jane_score": analyst.get("score", mentalist.get("score")),
+            "baseline_risk": _finite_or_none(decision.get("baseline_risk")),
+            "linkrisk_risk": _finite_or_none(decision.get("linkrisk_risk")),
+            "graph_confidence": _finite_or_none(decision.get("graph_confidence")),
+            "jane_score": _finite_or_none(jane_score),
             "jane_clue_count": analyst.get("clue_count", mentalist.get("clue_count")),
             "v5_action": decision.get("v5_action"),
             "final_action": decision.get("action"),
