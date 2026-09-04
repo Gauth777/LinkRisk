@@ -55,6 +55,8 @@ VALIDATION_SNAPSHOT = {
     "held_out_test_status": "v1_final_opened_once",
 }
 
+VALID_ACTIONS = {"ALLOW", "VERIFY", "REVIEW"}
+
 
 class TransactionRequest(BaseModel):
     amount: float = Field(ge=0)
@@ -202,9 +204,85 @@ def _engine_or_503() -> LiveLinkRiskEngine:
         ) from exc
 
 
+def _operational_overlay_index() -> dict[str, dict[str, Any]]:
+    """Read the latest dashboard action without mutating causal engine state.
+
+    The frozen engine remains the scoring source of truth. The payment-intelligence
+    table may contain a later operator decision (for example, a VERIFY override
+    after analyst review). UI-facing API responses should reflect that operational
+    action while preserving the original model action and routing reason.
+
+    Any persistence outage simply falls back to the frozen engine response.
+    """
+    store = session_store.remote
+    if not store.enabled:
+        return {}
+    try:
+        rows = store._request(
+            "GET",
+            "linkrisk_payment_intelligence",
+            params={
+                "select": "transaction_id,final_action,routing_reason,source",
+                "limit": "1000",
+            },
+        ) or []
+    except Exception:
+        return {}
+
+    overlays: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        transaction_id = str(row.get("transaction_id") or "").strip()
+        final_action = str(row.get("final_action") or "").strip().upper()
+        if not transaction_id or final_action not in VALID_ACTIONS:
+            continue
+        overlays[transaction_id] = {
+            "final_action": final_action,
+            "routing_reason": str(row.get("routing_reason") or "").strip() or None,
+            "source": str(row.get("source") or "").strip() or None,
+        }
+    return overlays
+
+
+def _overlay_record_payload(
+    payload: dict[str, Any],
+    operational: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Overlay presentation-only operational state onto a serialized record."""
+    if not operational:
+        return payload
+    decision = payload.get("decision")
+    if not isinstance(decision, dict):
+        return payload
+
+    model_action = str(decision.get("action") or "ALLOW")
+    model_reason = str(decision.get("routing_reason") or "V5_ONLY")
+    final_action = str(operational.get("final_action") or model_action)
+    operational_reason = str(operational.get("routing_reason") or model_reason)
+
+    payload["operational"] = {
+        "model_action": model_action,
+        "model_routing_reason": model_reason,
+        "final_action": final_action,
+        "routing_reason": operational_reason,
+        "override": final_action != model_action or operational_reason != model_reason,
+        "source": operational.get("source"),
+    }
+
+    # This mutates only the serialized response copy. engine.get_record() remains
+    # unchanged, so causal replay, scoring, Jane evidence and adjudication are not
+    # affected by a dashboard/operator decision.
+    decision["action"] = final_action
+    decision["routing_reason"] = operational_reason
+    return payload
+
+
 def _record_payload(engine: LiveLinkRiskEngine, transaction_id: str) -> dict[str, Any]:
     record = engine.get_record(transaction_id)
-    return _jsonable(record)
+    payload = _jsonable(record)
+    operational = _operational_overlay_index().get(transaction_id)
+    return _overlay_record_payload(payload, operational)
 
 
 def _razorpay_secret() -> str:
@@ -259,17 +337,23 @@ def overview() -> dict[str, Any]:
         "capacity": None,
     }
     if engine is not None:
-        frame = engine.feed()
+        transaction_ids = list(engine.transaction_ids)
+        overlays = _operational_overlay_index()
         if hasattr(engine, "capacity_status"):
             live["capacity"] = _jsonable(engine.capacity_status())
-        if not frame.empty:
-            actions = frame["Action"].astype(str)
+        if transaction_ids:
+            actions: list[str] = []
+            for transaction_id in transaction_ids:
+                decision = engine.get_record(transaction_id)["decision"]
+                model_action = str(decision["action"])
+                operational = overlays.get(transaction_id) or {}
+                actions.append(str(operational.get("final_action") or model_action))
             live.update(
                 {
-                    "transactions": int(len(frame)),
-                    "allow": int((actions == "ALLOW").sum()),
-                    "verify": int((actions == "VERIFY").sum()),
-                    "review": int((actions == "REVIEW").sum()),
+                    "transactions": len(transaction_ids),
+                    "allow": sum(action == "ALLOW" for action in actions),
+                    "verify": sum(action == "VERIFY" for action in actions),
+                    "review": sum(action == "REVIEW" for action in actions),
                     "clock": float(engine.clock),
                 }
             )
@@ -421,7 +505,10 @@ async def razorpay_webhook(request: Request) -> dict[str, Any]:
             "duplicate": False,
             "event_id": event_id,
             "event_type": event_type,
-            "transaction": _jsonable(record),
+            "transaction": _overlay_record_payload(
+                _jsonable(record),
+                _operational_overlay_index().get(transaction_id),
+            ),
         }
     except HTTPException:
         razorpay_state.release_event(event_id)
@@ -439,12 +526,18 @@ def transactions() -> dict[str, Any]:
     engine = _restore_if_persisted()
     if engine is None:
         return {"items": [], "clock": 0.0}
+    overlays = _operational_overlay_index()
     items = []
     for tx_id in engine.transaction_ids:
         record = engine.get_record(tx_id)
         decision = record["decision"]
         mentalist = record.get("mentalist") or {}
         event = record["input"]
+        model_action = str(decision["action"])
+        model_reason = str(decision.get("routing_reason", "V5_ONLY"))
+        operational = overlays.get(tx_id) or {}
+        final_action = str(operational.get("final_action") or model_action)
+        operational_reason = str(operational.get("routing_reason") or model_reason)
         items.append(
             {
                 "transaction_id": tx_id,
@@ -457,9 +550,13 @@ def transactions() -> dict[str, Any]:
                 "jane_score": mentalist.get("score"),
                 "clue_count": mentalist.get("clue_count", 0),
                 "mentalist_invoked": mentalist.get("invoked", False),
-                "v5_action": decision.get("v5_action", decision["action"]),
-                "action": decision["action"],
-                "routing_reason": decision.get("routing_reason", "V5_ONLY"),
+                "v5_action": decision.get("v5_action", model_action),
+                "action": final_action,
+                "routing_reason": operational_reason,
+                "model_action": model_action,
+                "model_routing_reason": model_reason,
+                "operational_override": final_action != model_action or operational_reason != model_reason,
+                "operational_source": operational.get("source"),
                 "adjudication": engine.adjudication_status(tx_id),
                 "integration_source": (record.get("integration") or {}).get("source"),
             }
@@ -508,7 +605,10 @@ def deep_investigate(transaction_id: str) -> dict[str, Any]:
                 # The inference already succeeded; optional local persistence must
                 # not turn a valid analyst deduction into a false HTTP failure.
                 pass
-        return _jsonable(record)
+        return _overlay_record_payload(
+            _jsonable(record),
+            _operational_overlay_index().get(transaction_id),
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
