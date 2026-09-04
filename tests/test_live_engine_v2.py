@@ -114,7 +114,7 @@ def test_review_is_immutable_and_does_not_invoke_mentalist():
     assert record["decision"]["routing_reason"].startswith("V5_REVIEW_MANDATORY")
 
 
-def test_live_capacity_can_defer_second_proactive_verify():
+def test_live_capacity_tracks_but_does_not_veto_second_proactive_verify():
     mentalist = CountingMentalistScorer(score=0.90, active_clues=True)
     controller = CausalCapacityController(
         total_rate=0.06,
@@ -132,8 +132,12 @@ def test_live_capacity_can_defer_second_proactive_verify():
     second = engine.score_event(_event("P-2"), transaction_id="TX-2")
 
     assert first["decision"]["action"] == "VERIFY"
-    assert second["decision"]["action"] == "ALLOW"
-    assert second["decision"]["routing_reason"] == "MENTALIST_TOTAL_CAPACITY_DEFERRED"
+    assert second["decision"]["action"] == "VERIFY"
+    assert second["decision"]["routing_reason"] == "MENTALIST_PROACTIVE_TOTAL_BUDGET_OVERFLOW"
+    assert second["mentalist"]["promoted_by_jane"] is True
+    assert second["mentalist"]["capacity_authorized"] is False
+    assert second["capacity"]["decision"]["budget_authorized"] is False
+    assert engine.capacity_status()["mentalist_budget_overflow"] == 1
 
 
 def test_capacity_status_reports_reasoning_usage():
