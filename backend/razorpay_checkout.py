@@ -156,13 +156,20 @@ def build_checkout_router(
         ):
             raise HTTPException(status_code=401, detail="Invalid Razorpay payment signature.")
 
+        engine = engine_provider()
         existing_transaction_id = state.transaction_for_payment(request.razorpay_payment_id)
         if existing_transaction_id is not None:
-            engine = engine_provider()
+            try:
+                existing = engine.get_record(existing_transaction_id)
+            except KeyError as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Razorpay payment was previously linked, but its LinkRisk record is unavailable.",
+                ) from exc
             return {
                 "verified": True,
                 "duplicate_payment": True,
-                "transaction": jsonable(engine.get_record(existing_transaction_id)),
+                "transaction": jsonable(existing),
             }
 
         try:
@@ -189,10 +196,26 @@ def build_checkout_router(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        engine = engine_provider()
         engine.clock = max(float(engine.clock), time.time())
         transaction_id = f"RZP-{request.razorpay_payment_id}"
-        record = engine.score_event(live_input, transaction_id=transaction_id)
+
+        # Recover cleanly from a previous request that scored successfully but
+        # failed after scoring (for example while writing the optional journal).
+        # Without this guard, retrying the successful Razorpay payment would hit
+        # the engine's duplicate-transaction protection and surface as HTTP 500.
+        try:
+            record = engine.get_record(transaction_id)
+            recovered = True
+        except KeyError:
+            recovered = False
+            try:
+                record = engine.score_event(live_input, transaction_id=transaction_id)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"LinkRisk scoring failed after Razorpay verification: {type(exc).__name__}: {exc}",
+                ) from exc
+
         record["integration"] = integration_metadata(
             source="razorpay_checkout_verify",
             event_type="checkout.verified",
@@ -200,14 +223,25 @@ def build_checkout_router(
             payment=payment,
             telemetry=telemetry,
         )
-        if persist_transaction is not None:
-            persist_transaction(record)
+
+        # Binding is part of payment idempotency and should not depend on the
+        # demo journal being writable. Render's local filesystem is ephemeral;
+        # persistence failure must not turn a successfully verified and scored
+        # payment into a false checkout failure in the browser.
         state.bind_payment(request.razorpay_payment_id, transaction_id)
+
+        persistence_warning: str | None = None
+        if persist_transaction is not None and not recovered:
+            try:
+                persist_transaction(record)
+            except Exception as exc:
+                persistence_warning = f"{type(exc).__name__}: {exc}"
 
         return {
             "verified": True,
-            "duplicate_payment": False,
+            "duplicate_payment": recovered,
             "transaction": jsonable(record),
+            "persistence_warning": persistence_warning,
         }
 
     return router
