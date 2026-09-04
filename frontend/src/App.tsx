@@ -70,6 +70,7 @@ const pct = (value: number, digits = 1) => `${(value * 100).toFixed(digits)}%`
 const score = (value?: number | null) => value == null ? '—' : Math.round(clamp01(value) * 100).toString()
 const amount = (value: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(value)
 const titleCase = (value: string) => value.toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+const isNeutralRecord = (record: CaseRecord) => record.transaction_id === 'NO-LIVE-TRANSACTION'
 
 function makePreviewRecord(item: FeedItem): CaseRecord {
   return {
@@ -162,7 +163,7 @@ function Sidebar({ page, onNavigate }: { page: Page; onNavigate: (page: Page) =>
     <div className="sidebar-spacer" />
     <div className="runtime-card">
       <ShieldCheck size={20} />
-      <div><b>Runtime frozen</b><span>Held-out test sealed</span></div>
+      <div><b>Selective v2 runtime</b><span>v1 final evaluated · v2 development</span></div>
     </div>
   </aside>
 }
@@ -261,7 +262,7 @@ function ValidationImpact({ overview }: { overview: OverviewPayload }) {
   const before = overview.validation.fraud_capture - overview.validation.fraud_capture_lift_pp / 100
   const after = overview.validation.fraud_capture
   return <div className="card impact-card">
-    <div className="card-heading"><div><h2>Capacity-preserving lift</h2><p>Development validation · same 6% intervention capacity</p></div><span className="frozen-label">FROZEN</span></div>
+    <div className="card-heading"><div><h2>Capacity-preserving lift</h2><p>Development validation · same 6% intervention capacity</p></div><span className="frozen-label">DEVELOPMENT</span></div>
     <div className="impact-bars">
       <div className="impact-row"><div><span>Stable v0.5</span><b>{pct(before, 2)}</b></div><div className="bar-track"><i style={{ width: `${before * 100}%` }} /></div></div>
       <div className="impact-row featured"><div><span>Mentalist v1.0</span><b>{pct(after, 2)}</b></div><div className="bar-track"><i style={{ width: `${after * 100}%` }} /></div></div>
@@ -292,45 +293,55 @@ function QueueDistribution({ items }: { items: FeedItem[] }) {
 }
 
 function MentalistSummary({ record, onInvestigate }: { record: CaseRecord; onInvestigate: () => void }) {
-  const mentalist = record.mentalist
+  const hasSelection = !isNeutralRecord(record)
+  const mentalist = hasSelection ? record.mentalist : null
   return <div className="card mentalist-summary">
     <div className="mentalist-summary-head"><span className="jane-orb"><BrainCircuit size={26} /></span><div><span className="eyebrow">Mentalist</span><h2>Current case signal</h2></div></div>
     <div className="mentalist-score"><strong>{score(mentalist?.score)}</strong><span>/100 Jane score</span></div>
+    {!hasSelection && <div className="mentalist-empty"><b>No active case</b><span>Select a transaction from Live Feed to inspect Jane's evidence.</span></div>}
     <div className="active-clues">
       {Object.entries(clueMeta).map(([key, meta]) => {
-        const active = !!mentalist?.clue_families?.[key]
+        const active = hasSelection && !!mentalist?.clue_families?.[key]
         return <div className={active ? 'active' : ''} key={key}>{meta.icon}<span>{meta.label}</span><b>{active ? 'ON' : '—'}</b></div>
       })}
     </div>
-    <button className="wide-button" onClick={onInvestigate}>Open case investigation <ArrowRight size={17} /></button>
+    <button className="wide-button" disabled={!hasSelection} onClick={onInvestigate}>{hasSelection ? 'Open case investigation' : 'Select a live transaction'} <ArrowRight size={17} /></button>
   </div>
 }
 
 function OverviewPage({
   overview,
   feed,
+  sessionFeed,
   selected,
   onOpen,
   onNavigate,
 }: {
   overview: OverviewPayload
   feed: FeedItem[]
+  sessionFeed: FeedItem[]
   selected: CaseRecord
   onOpen: (item: FeedItem) => void
   onNavigate: (page: Page) => void
 }) {
+  const transactionsSeen = overview.live.transactions
+  const interventions = overview.live.verify + overview.live.review
+  const interventionShare = transactionsSeen > 0 ? interventions / transactionsSeen : 0
+  const mentalistInvoked = sessionFeed.filter((item) => item.jane_score != null).length
+  const mentalistShare = transactionsSeen > 0 ? mentalistInvoked / transactionsSeen : 0
+
   return <main className="content">
     <SectionHeader
       eyebrow="Risk operations"
       title="Proactive fraud intelligence"
-      description="A readable operations view: current risk, scarce intervention capacity, and the strongest evidence-bearing cases."
-      action={<div className="sealed-pill"><ShieldCheck size={18} /><span>Held-out test sealed</span></div>}
+      description="Live operational telemetry first; validated development benchmarks remain clearly separated below."
+      action={<div className="sealed-pill"><ShieldCheck size={18} /><span>v1 final evaluated once</span></div>}
     />
-    <section className="metric-grid four">
-      <MetricCard icon={<ShieldCheck />} label="Fraud capture" value={pct(overview.validation.fraud_capture, 2)} delta={`+${overview.validation.fraud_capture_lift_pp.toFixed(2)}pp`} note="Mentalist v1.0 vs stable v0.5" />
-      <MetricCard icon={<UsersRound />} label="Legit friction" value={pct(overview.validation.legitimate_friction, 2)} delta={`${overview.validation.legitimate_friction_delta_pp.toFixed(2)}pp`} note="Lower after reallocation" tone="green" />
-      <MetricCard icon={<Layers3 />} label="Intervention capacity" value={pct(overview.validation.intervention_share, 0)} delta="unchanged" note="Frozen development policy" tone="blue" />
-      <MetricCard icon={<Sparkles />} label="Novel Jane frauds" value={overview.validation.mentalist_frauds_added.toString()} delta={`${overview.validation.mentalist_novel_cases} novel cases`} note="Beyond the full v0.5 policy" tone="purple" />
+    <section className="metric-grid four live-metric-grid">
+      <MetricCard icon={<Activity />} label="Transactions seen" value={transactionsSeen.toString()} delta={transactionsSeen > 0 ? 'live session' : 'awaiting payment'} note="Scored by the current runtime" />
+      <MetricCard icon={<Layers3 />} label="Intervention usage" value={pct(interventionShare, 1)} delta={`${interventions} actions`} note={`Sustained policy budget ${pct(overview.validation.intervention_share, 0)}`} tone="blue" />
+      <MetricCard icon={<BrainCircuit />} label="Mentalist invoked" value={mentalistInvoked.toString()} delta={pct(mentalistShare, 1)} note="Jane runs only on eligible evidence-bearing cases" tone="purple" />
+      <MetricCard icon={<ShieldCheck />} label="Actions" value={`${overview.live.allow} / ${overview.live.verify} / ${overview.live.review}`} delta="A / V / R" note="ALLOW / VERIFY / REVIEW" tone="green" />
     </section>
     <section className="overview-main-grid">
       <div className="card feed-card">
@@ -341,7 +352,7 @@ function OverviewPage({
     </section>
     <section className="overview-bottom-grid">
       <ValidationImpact overview={overview} />
-      <QueueDistribution items={feed} />
+      <QueueDistribution items={sessionFeed} />
     </section>
   </main>
 }
@@ -378,7 +389,30 @@ function InvestigationPage({
   onAdvance: () => void
   onNavigate: (page: Page) => void
 }) {
-  const mentalist = record.mentalist
+  const hasSelection = !isNeutralRecord(record)
+  const mentalist = hasSelection ? record.mentalist : null
+
+  if (!hasSelection) {
+    return <main className="content">
+      <button className="back-button" onClick={onBack}><ArrowLeft size={17} />Back to overview</button>
+      <SectionHeader
+        eyebrow="Investigation"
+        title="No transaction selected"
+        description="Choose a live payment to inspect the complete point-in-time decision path."
+      />
+      <section className="card neutral-investigation">
+        <div className="neutral-investigation-head"><UserRoundSearch size={28} /><div><h2>Waiting for a case</h2><p>No action has been produced because no live transaction is selected.</p></div></div>
+        <div className="neutral-case-grid">
+          <div><span>Transaction model</span><strong>—</strong></div>
+          <div><span>v0.5 risk</span><strong>—</strong></div>
+          <div><span>Mentalist / Jane</span><strong>—</strong></div>
+          <div><span>Final action</span><strong>—</strong></div>
+        </div>
+        <button className="primary-button" onClick={() => onNavigate('feed')}>Open Live Feed <ArrowRight size={17} /></button>
+      </section>
+    </main>
+  }
+
   return <main className="content">
     <button className="back-button" onClick={onBack}><ArrowLeft size={17} />Back to overview</button>
     <SectionHeader
@@ -515,7 +549,7 @@ function NetworkPage({ record, feed, onSelect }: { record: CaseRecord; feed: Fee
       <span className="toolbar-note"><ShieldCheck size={17} />Same-timestamp rows cannot see one another.</span>
     </div>
     <div className="card network-page-card">
-      <div className="card-heading"><div><h2>{record.transaction_id}</h2><p>{record.network.nodes.length} nodes · {record.network.edges.length} edges</p></div><ActionBadge action={record.decision.action} /></div>
+      <div className="card-heading"><div><h2>{record.transaction_id}</h2><p>{record.network.nodes.length} nodes · {record.network.edges.length} edges</p></div>{!isNeutralRecord(record) && <ActionBadge action={record.decision.action} />}</div>
       <GraphCanvas record={record} showLabels={showLabels} />
       <div className="network-legend"><span><i className="current" />Current transaction</span><span><i className="relation" />Relationship context</span><span><i className="prior" />Prior transaction</span><span><i className="fraud" />Matured fraud</span></div>
     </div>
@@ -543,7 +577,7 @@ function CasesPage({ feed, onOpen }: { feed: FeedItem[]; onOpen: (item: FeedItem
 function ReportsPage({ overview }: { overview: OverviewPayload }) {
   const before = overview.validation.fraud_capture - overview.validation.fraud_capture_lift_pp / 100
   return <main className="content">
-    <SectionHeader eyebrow="Development validation" title="Performance report" description="Frozen validation results only. The chronological held-out test remains sealed." action={<span className="sealed-pill"><ShieldCheck size={18} />Test sealed</span>} />
+    <SectionHeader eyebrow="Development validation" title="Performance report" description="Development validation results only. The v1 chronological held-out test was evaluated once and is not reused for tuning." action={<span className="sealed-pill"><ShieldCheck size={18} />v1 final evaluated once</span>} />
     <section className="metric-grid three">
       <MetricCard icon={<ShieldCheck />} label="Stable v0.5 capture" value={pct(before, 2)} delta="baseline policy" note="Before Mentalist reallocation" />
       <MetricCard icon={<Sparkles />} label="Mentalist v1.0 capture" value={pct(overview.validation.fraud_capture, 2)} delta={`+${overview.validation.fraud_capture_lift_pp.toFixed(2)}pp`} note="Same intervention count" tone="purple" />
@@ -582,40 +616,43 @@ function AlertsPage({ feed, onOpen }: { feed: FeedItem[]; onOpen: (item: FeedIte
 
 function ModelsPage({ record }: { record: CaseRecord }) {
   const [activeLayer, setActiveLayer] = useState<'baseline' | 'memory' | 'mentalist'>('mentalist')
+  const hasSelection = !isNeutralRecord(record)
   const details = {
     baseline: {
       title: 'Transaction baseline',
-      score: record.decision.baseline_risk,
+      score: hasSelection ? record.decision.baseline_risk : null,
       copy: 'Scores the incoming transaction from the frozen IEEE-CIS-compatible feature adapter. This is a risk score, not a calibrated probability.',
       icon: <Gauge size={28} />,
     },
     memory: {
       title: 'Trusted-memory specialist',
-      score: record.decision.linkrisk_risk,
+      score: hasSelection ? record.decision.linkrisk_risk : null,
       copy: 'Uses causal relationship structure plus delayed adjudicated feedback. Historical fraud remains soft evidence and never forces a verdict by itself.',
       icon: <Database size={28} />,
     },
     mentalist: {
       title: 'Mentalist investigator',
-      score: record.mentalist?.score ?? 0,
-      copy: 'Ranks evidence-bearing cases from present-tense velocity, behavioral change, coordination and reuse/churn. It does not consume confirmed-fraud labels.',
+      score: hasSelection ? record.mentalist?.score : null,
+      copy: 'Jane ranks present-tense velocity, behavioral change, coordination and reuse/churn only when the cheap evidence gate finds an eligible case. Confirmed-fraud labels are not Mentalist inputs.',
       icon: <BrainCircuit size={28} />,
     },
   }
   const detail = details[activeLayer]
   return <main className="content">
-    <SectionHeader eyebrow="Decision architecture" title="Model layers" description="The layers stay separate: no arbitrary score averaging and no hidden action override." />
+    <SectionHeader eyebrow="Decision architecture" title="Model layers" description="Separate layers, selective Jane inference, and explicit capacity control — no arbitrary score averaging or hidden action override." />
     <div className="model-tabs">
       {(['baseline', 'memory', 'mentalist'] as const).map((layer) => <button className={activeLayer === layer ? 'active' : ''} onClick={() => setActiveLayer(layer)} key={layer}>{details[layer].icon}<span>{details[layer].title}</span></button>)}
     </div>
     <div className="card model-detail">
-      <div className="model-hero"><span>{detail.icon}</span><div><span className="eyebrow">Selected layer</span><h2>{detail.title}</h2><p>{detail.copy}</p></div><strong>{score(detail.score)}<small>/100</small></strong></div>
-      <div className="architecture-flow">
+      <div className="model-hero"><span>{detail.icon}</span><div><span className="eyebrow">Selected layer</span><h2>{detail.title}</h2><p>{detail.copy}</p></div><strong>{score(detail.score)}<small>{hasSelection ? '/100' : 'No active case'}</small></strong></div>
+      <div className="architecture-flow architecture-v2">
         <div><Gauge /><b>Transaction model</b><span>raw risk</span></div><ArrowRight />
         <div><Database /><b>v0.5 memory</b><span>trusted history</span></div><ArrowRight />
-        <div><BrainCircuit /><b>Mentalist</b><span>proactive clues</span></div><ArrowRight />
-        <div className="final"><ShieldCheck /><b>Frozen router</b><span>ALLOW / VERIFY / REVIEW</span></div>
+        <div className="gate"><Radar /><b>Evidence gate</b><span>ordinary → bypass · eligible → Jane</span></div><ArrowRight />
+        <div><BrainCircuit /><b>Mentalist / Jane</b><span>selective proactive clues</span></div><ArrowRight />
+        <div className="final"><ShieldCheck /><b>Cost-aware v2 router</b><span>frozen thresholds · live capacity</span></div>
       </div>
+      <div className="architecture-note"><Sparkles size={16} /><span>Ordinary cases bypass Jane and go straight to routing. REVIEW remains mandatory; the live controller targets 6% sustained intervention with a 1% Mentalist reserve.</span></div>
     </div>
   </main>
 }
@@ -635,7 +672,7 @@ function DataPage({ overview, feed, engineReady, preview }: { overview: Overview
         <div><Check /><b>Point-in-time causal features</b><span>Future rows and same-timestamp peers do not leak into the current decision.</span></div>
         <div><Check /><b>Delayed trusted feedback</b><span>Adjudicated outcomes become usable only after the frozen delay and actual recording time.</span></div>
         <div><Check /><b>Proactive Mentalist channel</b><span>Confirmed-fraud history is not an input to the Mentalist model.</span></div>
-        <div><AlertTriangle /><b>Development validation</b><span>Validation was reused during development; the held-out test is still sealed.</span></div>
+        <div><AlertTriangle /><b>Evaluation boundary</b><span>Development validation was reused during development; the v1 final held-out partition was evaluated once and is not reused for tuning.</span></div>
       </div>
     </div>
   </main>
@@ -754,6 +791,9 @@ export default function App() {
         const currentStillExists = transactionPayload.items.some((item) => item.transaction_id === selected.transaction_id)
         const target = currentStillExists ? selected.transaction_id : transactionPayload.items[transactionPayload.items.length - 1].transaction_id
         setSelected(await api.transaction(target))
+      } else {
+        setFeed([])
+        setSelected(previewCase)
       }
     } catch {
       // Keep the explicitly-labelled preview session available while the API is unavailable.
@@ -820,7 +860,7 @@ export default function App() {
   const pageContent = (() => {
     switch (page) {
       case 'overview':
-        return <OverviewPage overview={overview} feed={visibleFeed} selected={selected} onOpen={(item) => void openItem(item)} onNavigate={setPage} />
+        return <OverviewPage overview={overview} feed={visibleFeed} sessionFeed={feed} selected={selected} onOpen={(item) => void openItem(item)} onNavigate={setPage} />
       case 'investigations':
         return <InvestigationPage record={selected} preview={preview} onBack={() => setPage('overview')} onAdjudicate={(outcome) => void adjudicate(outcome)} onAdvance={() => void advance()} onNavigate={setPage} />
       case 'feed':
