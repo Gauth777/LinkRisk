@@ -7,7 +7,18 @@ failure is retained in ``service.last_error`` so /api/health stays reachable and
 surfaces the deployment problem instead of crashing the web service.
 """
 
+from pathlib import Path
+
 from backend.api import app, service
+from backend.protection import build_protection_router
+
+ROOT = Path(__file__).resolve().parents[1]
+app.include_router(
+    build_protection_router(
+        engine_provider=service.get,
+        root=ROOT,
+    )
+)
 
 try:
     service.get()
