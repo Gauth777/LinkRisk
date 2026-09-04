@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from decimal import Decimal, ROUND_HALF_UP
 import os
 import secrets
@@ -34,9 +35,9 @@ class CheckoutOrderRequest(BaseModel):
     receiver_domain: str = Field(default="merchant.local", min_length=1, max_length=160)
     device_type: str = Field(default="desktop", min_length=1, max_length=40)
     product_code: str = Field(default="W", min_length=1, max_length=12)
-    customer_name: str = Field(default="Demo Customer", min_length=1, max_length=120)
-    customer_email: str = Field(default="demo@example.com", min_length=3, max_length=160)
-    customer_contact: str = Field(default="+919999999999", min_length=5, max_length=24)
+    customer_name: str | None = Field(default=None, max_length=120)
+    customer_email: str | None = Field(default=None, max_length=160)
+    customer_contact: str | None = Field(default=None, max_length=24)
 
 
 class CheckoutVerificationRequest(BaseModel):
@@ -129,6 +130,14 @@ def build_checkout_router(
             )
         )
 
+        prefill: dict[str, str] = {}
+        if request.customer_name and request.customer_name.strip():
+            prefill["name"] = request.customer_name.strip()
+        if request.customer_email and request.customer_email.strip():
+            prefill["email"] = request.customer_email.strip()
+        if request.customer_contact and request.customer_contact.strip():
+            prefill["contact"] = request.customer_contact.strip()
+
         return {
             "key_id": key_id,
             "order_id": order_id,
@@ -136,11 +145,7 @@ def build_checkout_router(
             "currency": currency,
             "name": "LinkRisk",
             "description": "AI Risk Manager · Test Mode payment",
-            "prefill": {
-                "name": request.customer_name,
-                "email": request.customer_email,
-                "contact": request.customer_contact,
-            },
+            "prefill": prefill,
             "test_mode": True,
         }
 
@@ -202,8 +207,6 @@ def build_checkout_router(
         engine.clock = max(float(engine.clock), time.time())
         transaction_id = f"RZP-{request.razorpay_payment_id}"
 
-        # Recover cleanly from a previous request that scored successfully but
-        # failed after scoring (for example while writing optional persistence).
         try:
             record = engine.get_record(transaction_id)
             recovered = True
@@ -225,8 +228,6 @@ def build_checkout_router(
             telemetry=telemetry,
         )
 
-        # Binding is part of payment idempotency and should not depend on either
-        # persistence layer being writable.
         state.bind_payment(request.razorpay_payment_id, transaction_id)
 
         warnings: list[str] = []
@@ -236,9 +237,6 @@ def build_checkout_router(
             except Exception as exc:
                 warnings.append(f"local journal: {type(exc).__name__}: {exc}")
 
-        # Persistent merchant intelligence is deliberately best-effort. A DB
-        # outage must never turn a successfully verified payment into a false
-        # checkout failure.
         try:
             if merchant_store.enabled:
                 merchant_store.upsert_payment(record, payment)
