@@ -2,132 +2,127 @@
 
 **Proactive payment-risk investigation: detect the pattern before the profile becomes known fraud.**
 
-Razorpay AI Buildathon — Track 2: AI Risk Manager
+Razorpay AI Buildathon — Track 2: **AI Risk Manager**
 
-## Product thesis
-A transaction can look ordinary in isolation while its short-horizon behavior and local relationships form a suspicious case. LinkRisk keeps three evidence channels conceptually separate:
+**Live demo:** https://linkrisk.onrender.com/
 
-1. **Transaction intelligence** — the frozen transaction-only XGBoost baseline.
-2. **Trusted relationship memory** — delayed adjudicated fraud/legitimate evidence from v0.5.
-3. **Mentalist proactive deduction** — label-free velocity, behavior-change, coordination and reuse/churn clues available at decision time.
+## What LinkRisk does
 
-Historical fraud is evidence, never automatic guilt. Risk scores are ranking scores, not calibrated fraud probabilities.
+A payment can look ordinary in isolation while its short-horizon behavior, relationship history and surrounding context form a suspicious case. LinkRisk therefore does not rely on one monolithic fraud score.
+
+It keeps three evidence channels separate:
+
+1. **Transaction intelligence** — a frozen XGBoost transaction-risk baseline.
+2. **Trusted relationship memory** — causal relationship features plus delayed adjudicated fraud/legitimate feedback from v0.5.
+3. **Mentalist proactive deduction (“Jane”)** — present-tense velocity, behavior-change, coordination and reuse/churn evidence that does **not** consume confirmed-fraud labels.
+
+Historical fraud is evidence, never automatic guilt. Scores are ranking/risk scores, not calibrated fraud probabilities.
+
+> **Jane** is the deliberately playful internal name for the Mentalist investigator: the component that looks for a constellation of weak clues before a profile is already known fraud.
+
+## Product architecture
+
+```text
+Razorpay Test payment + merchant telemetry
+                    │
+                    ▼
+          Transaction baseline
+                    │
+                    ▼
+       Trusted-memory v0.5 layer
+                    │
+          ┌─────────┴─────────┐
+          │                   │
+   mandatory REVIEW      other traffic
+   remains immutable          │
+                              ▼
+                     Cheap evidence gate
+                       /             \
+               ordinary             evidence-bearing
+                  │                        │
+                  │                        ▼
+                  │                  Jane / Mentalist
+                  │                  investigator
+                  │                        │
+                  └─────────────┬──────────┘
+                                ▼
+                      Cost-aware v2 router
+                 frozen thresholds + live capacity
+                                │
+                     ┌──────────┼──────────┐
+                     ▼          ▼          ▼
+                   ALLOW      VERIFY     REVIEW
+```
+
+The live v2 runtime uses **selective inference** and causal/stateful capacity accounting:
+
+- sustained total intervention rate: **6%**;
+- sustained Mentalist reserve: **1%**;
+- bounded cold-start burst capacity;
+- v0.5 REVIEW is mandatory and is never downgraded because capacity is exhausted;
+- Mentalist is invoked only for eligible evidence-bearing cases rather than every transaction.
+
+The buildathon product surface is `frontend/` + `backend/api.py`. `app.py` remains an engineering/debug console.
+
+## Why selective reasoning?
+
+The development experiment showed that Mentalist did not need to run on most traffic:
+
+- Mentalist invoked: **2.27%**
+- Mentalist bypassed: **97.73%**
+- intervention held at **6.00%**
+- precision: **24.37% → 25.31%**
+- fraud capture: **42.57% → 44.21%**
+- FPR: **4.6973% → 4.6412%**
+- TP / FP delta: **+50 / −48**
+
+This is **development validation**, not a new held-out claim.
 
 ## Evaluation status
 
-### v1.0 final held-out result — frozen
+### v1.0 final chronological held-out evaluation — opened once, frozen
 
-The one-shot chronological held-out set contained **88,581 transactions** with **3,083 frauds (3.48%)**. No model fitting or threshold selection occurred on test, and test outcomes were excluded from all prediction features.
+The one-shot held-out partition contained **88,581 transactions** with **3,083 frauds (3.48%)**. No fitting or threshold selection occurred on this test partition.
 
-**Baseline hard detector**
-- Precision: **49.81%**
-- Recall: **21.08%**
-- PR-AUC: **0.2873**
-- FPR: **0.7661%**
+| System | Precision | Recall / capture | PR-AUC | FPR | Intervention |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Transaction baseline hard detector | 49.81% | 21.08% | 0.2873 | 0.7661% | — |
+| v0.5 hard REVIEW | 49.10% | 23.09% | 0.3132 | 0.8632% | — |
+| Stable v0.5 operational | 21.64% | 35.61% | — | 4.6516% | 5.73% |
+| Final v1.0 Mentalist-routed | 17.44% | 38.50% | — | 6.5744% | 7.69% |
 
-**v0.5 hard REVIEW detector**
-- Precision: **49.10%**
-- Recall: **23.09%**
-- PR-AUC: **0.3132**
-- FPR: **0.8632%**
+Final v1.0 confusion matrix: **TP / FP / TN / FN = 1,187 / 5,621 / 79,877 / 1,896**.
 
-**Stable v0.5 operational policy**
-- Precision: **21.64%**
-- Fraud capture: **35.61%**
-- FPR: **4.6516%**
-- Intervention share: **5.73%**
+Mentalist produced a net **+89 frauds captured** over stable v0.5, but validation-calibrated routing expanded intervention from **5.73% to 7.69%** under later temporal traffic. That capacity drift is treated as a real temporal policy-calibration finding, not tuned away on the same held-out set.
 
-**Final LinkRisk v1.0 — Mentalist routed**
-- Precision: **17.44%**
-- Fraud capture: **38.50%**
-- FPR: **6.5744%**
-- Intervention share: **7.69%**
-- TP / FP / TN / FN: **1,187 / 5,621 / 79,877 / 1,896**
-
-Mentalist produced a net **+89 frauds captured** versus stable v0.5, but the validation-calibrated scalar routing boundaries expanded intervention by **1,733 rows** under later temporal traffic. That capacity drift is treated as a real distribution-shift/policy-calibration finding and is not tuned away on the same held-out set.
-
-**The v1.0 held-out result is final. Do not retune on this test set.**
+**The v1.0 held-out result is final and is not reused for v2 tuning.**
 
 ### v2 cost-aware selective investigation — development validation only
 
-v2 is a post-test engineering response, so the old v1.0 held-out set is not reused for an unbiased v2 claim.
+v2 was designed after observing the v1.0 capacity drift. The old final set is therefore spent and is not relabelled as an unbiased v2 evaluation.
 
-The v2 development design adds:
-- a cheap evidence-family gate before Mentalist inference;
-- Mentalist only for structurally interesting v0.5-ALLOW cases;
-- an explicit 6% batch intervention budget;
-- immutable v0.5 REVIEW;
-- a fixed 1% Mentalist reservation, with remaining capacity filled by strongest v0.5 VERIFY cases.
+See [`docs/evaluation_results.md`](docs/evaluation_results.md) for the complete evaluation ledger.
 
-Development validation:
-- Mentalist invoked: **2.27%** of transactions
-- Mentalist bypassed: **97.73%**
-- Intervention: **6.00% → 6.00%**
-- Precision: **24.37% → 25.31%** (**+0.93 pp**)
-- Recall / fraud capture: **42.57% → 44.21%** (**+1.64 pp**)
-- FPR: **4.6973% → 4.6412%** (**−0.06 pp**)
-- TP / FP delta: **+50 / −48**
+## Challengers we rejected
 
-This is development evidence for selective reasoning and explicit capacity control, not a new held-out result. See [`docs/evaluation_results.md`](docs/evaluation_results.md) for the evaluation ledger.
+More sophisticated was not automatically better. Post-final-test experiments stayed development-only and were rejected when they failed to improve the frozen baseline.
 
-## Architecture
+| Challenger | Development result | Decision |
+| --- | --- | --- |
+| AutoGluon challenger | Effective ensemble collapsed to XGBoost; PR-AUC **0.3413** vs frozen baseline **0.3496** | **REJECT** |
+| Heterogeneous GraphSAGE | Same-slice PR-AUC **0.1452** vs baseline **0.4019** | **REJECT** |
+| Causal graph-feature + XGBoost fusion | PR-AUC **0.3613** vs same-slice frozen baseline **0.4019**; also lost recall | **REJECT** |
 
-```text
-Merchant telemetry ─┐
-                    ├─→ FastAPI → LiveLinkRiskEngine
-Razorpay payment ────┘               │
-     │                              ├── transaction baseline
-     ├─ Checkout callback ──────────┤── causal relationship state
-     └─ signed webhook ─────────────┤── delayed trusted feedback
-React/Vite product UI ←─────────────┤── Mentalist proactive features
-                                    └── frozen runtime routing
-                                             ↓
-                                  ALLOW / VERIFY / REVIEW
-```
+The conclusion is intentionally conservative: on the tested IEEE-CIS development protocols, these challengers did not earn their additional complexity. The useful gains came from **trusted delayed evidence, selective behavioral reasoning and capacity-aware routing**.
 
-The current live product still uses the frozen v1.0 per-transaction runtime contract. The v2 batch/development controller is merged as a separate cost-aware design; a streaming version must use causal/stateful capacity accounting rather than future-aware whole-batch ranking.
+## Razorpay Test Mode integration
 
-`app.py` remains a Streamlit engineering/debug console. The buildathon product surface is `frontend/` + `backend/api.py`.
+The deployed demo uses Razorpay **Test Mode**. No real money is involved.
 
-## Run the product locally
-
-### 1. Python API
-
-```bash
-python -m pip install -r requirements.txt
-uvicorn backend.api:app --reload --port 8000
-```
-
-### 2. React UI
-
-In another terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open the Vite URL (normally `http://localhost:5173`). Vite proxies `/api` to FastAPI.
-
-If the frozen model artifacts are present locally, **New payment** runs the real engine. If they are absent, the UI opens in clearly-labelled preview mode.
-
-## Razorpay Test Mode Checkout
-
-The buildathon checkout path accepts **Test Mode keys only**. Put credentials in a local `.env` or shell environment; `.env` is git-ignored.
+The primary checkout path is:
 
 ```text
-RAZORPAY_KEY_ID=rzp_test_...
-RAZORPAY_KEY_SECRET=...
-RAZORPAY_WEBHOOK_SECRET=...
-```
-
-Never expose `RAZORPAY_KEY_SECRET` or `RAZORPAY_WEBHOOK_SECRET` to the browser or repository.
-
-The New payment flow performs:
-
-```text
-merchant telemetry form
+merchant telemetry
       ↓
 POST /api/integrations/razorpay/orders
       ↓
@@ -137,37 +132,80 @@ Razorpay Standard Checkout
       ↓
 POST /api/integrations/razorpay/payments/verify
       ↓
-server verifies signature and fetches authoritative Payment
+server verifies checkout signature
       ↓
-order + amount + currency cross-check
+fetch authoritative Razorpay Payment
+      ↓
+order + amount + currency + status checks
       ↓
 LinkRisk scoring → ALLOW / VERIFY / REVIEW
 ```
 
-The callback-verification path works during local development. Once deployed, the webhook remains the durable retry/event path and payment-id deduplication prevents duplicate scoring.
-
-## Razorpay webhook integration
-
-LinkRisk accepts signed Razorpay payment webhooks at:
+The backend also implements an **optional signed webhook ingestion path** at:
 
 ```text
 POST /api/webhooks/razorpay
 ```
 
-The endpoint:
-- verifies `X-Razorpay-Signature` using HMAC-SHA256 over the exact raw request body;
-- uses `x-razorpay-event-id` for event idempotency with a body-hash fallback;
-- accepts `payment.authorized` and `payment.captured`;
-- deduplicates by Razorpay payment id;
-- normalizes payment fields into the current IEEE-CIS-compatible runtime adapter;
-- never claims or derives payer IP from the standard Razorpay Payment payload.
+When configured, it:
 
-Razorpay's standard Payment entity does not provide the browser/device/session context used by LinkRisk's proactive relationship logic. Merchant-observed telemetry supplies that context. Missing telemetry uses payment-unique unknown contexts rather than a shared fake device.
+- verifies `X-Razorpay-Signature` over the exact raw request body;
+- accepts `payment.authorized` and `payment.captured`;
+- deduplicates events and Razorpay payment IDs;
+- normalizes payment metadata into the current runtime adapter.
+
+The public buildathon deployment currently relies on the working checkout-verification path; webhook support exists in code but is not required for the demo.
+
+Razorpay's standard Payment entity does not expose all browser/device/session context needed by LinkRisk. That context comes from merchant-observed telemetry. LinkRisk does not invent payer IP or reinterpret masked IEEE fields as literal identities.
+
+## Run locally
+
+### 1. API
+
+```bash
+python -m pip install -r requirements.txt
+uvicorn backend.api:app --reload --port 8000
+```
+
+### 2. React product UI
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the Vite URL (normally `http://localhost:5173`). Vite proxies `/api` to FastAPI.
+
+## Environment variables
+
+For Razorpay Test Mode checkout:
+
+```text
+RAZORPAY_KEY_ID=rzp_test_...
+RAZORPAY_KEY_SECRET=...
+```
+
+Optional webhook verification:
+
+```text
+RAZORPAY_WEBHOOK_SECRET=...
+```
+
+Cloud model-bundle bootstrap:
+
+```text
+LINKRISK_MODEL_BUNDLE_URL=<https URL to frozen ZIP>
+LINKRISK_MODEL_BUNDLE_SHA256=<SHA-256 of that ZIP>
+```
+
+Never expose API secrets or webhook secrets to the browser or repository.
 
 ## Frozen runtime assets
+
 Raw IEEE-CIS data and trained model binaries are intentionally not committed.
 
-Local runtime expects:
+The runtime expects:
 
 ```text
 artifacts/models/baseline_preprocessor.joblib
@@ -179,51 +217,60 @@ artifacts/results/mentalist_v7_validation.json
 artifacts/results/mentalist_runtime_policy.json
 ```
 
-The exact runtime policy JSON is source-controlled. Trained model files remain git-ignored.
+The exact policy metadata is source-controlled. Trained model binaries remain git-ignored and are loaded from the frozen deployment bundle when absent locally.
 
-## Buildathon deployment
-The repository includes a multi-stage `Dockerfile` that builds the React app and serves it from the same FastAPI service.
+## Dataset
 
-For cloud deployment, package the frozen runtime files into a ZIP preserving repository-relative paths and configure:
+The current trained model and feature adapter are calibrated to **IEEE-CIS-compatible transaction attributes**. Raw competition data is not committed.
+
+For experiment reproduction, place:
 
 ```text
-LINKRISK_MODEL_BUNDLE_URL=<https URL to frozen ZIP>
-LINKRISK_MODEL_BUNDLE_SHA256=<recommended SHA-256>
-RAZORPAY_KEY_ID=<rzp_test_...>
-RAZORPAY_KEY_SECRET=<Test Mode key secret>
-RAZORPAY_WEBHOOK_SECRET=<Razorpay webhook secret>
+data/raw/train_transaction.csv
+data/raw/train_identity.csv
 ```
 
-At startup, LinkRisk downloads the bundle only when local model assets are absent, optionally verifies SHA-256, safely extracts it, and refuses scoring if required files remain missing.
+The engine architecture is conceptually dataset-independent; the currently trained weights and adapter are not.
 
-## Development commands
+## Reproduction / checks
 
 ```bash
 pytest -q
 cd frontend && npm run build
 ```
 
-CI runs both checks on `main` and feature branches.
-
-Development-only v2 evaluation:
+Key development-only experiments:
 
 ```bash
 python scripts/evaluate_cost_aware_v2.py
+python scripts/evaluate_autogluon_challenger.py
+python scripts/evaluate_gnn_signal_feasibility.py
+python scripts/evaluate_graph_xgb_fusion.py
 ```
 
-Do **not** use the old v1.0 held-out set to tune or validate v2.
+Do **not** rerun or retune against the old v1.0 final held-out partition.
 
-## Dataset
-The current trained model is calibrated to IEEE-CIS-compatible attributes. Raw competition data is not committed. Put `train_transaction.csv` and `train_identity.csv` under `data/raw/` only for local experiment reproduction.
+## Safety and evaluation guardrails
 
-The live product uses a deterministic demo adapter to map human-readable simulator/merchant inputs into masked IEEE-compatible fields expected by the frozen model. This is not a claim that masked IEEE fields are literal customer identities.
-
-## Safety / evaluation guardrails
 - Same-timestamp transactions cannot see one another.
-- Mentalist proactive features consume no fraud labels.
+- Point-in-time relationship features use only information available before the current decision.
+- Mentalist proactive features consume no confirmed-fraud labels.
 - Adjudicated history becomes usable only after `max(transaction_time + 72h, recorded_at)`.
 - v0.5 hard REVIEW remains immutable.
 - Correlated signals do not count as independent evidence families.
-- Scores are risk/ranking scores, not calibrated fraud probabilities.
-- v1.0 final held-out evaluation is immutable and is not reused for v2 tuning.
-- v2 development results must remain labelled development validation until a new untouched evaluation source exists.
+- Confidence means independent evidence support, not fraud probability.
+- Model scores are ranking/risk scores, not calibrated probabilities.
+- v1.0 final held-out evaluation is immutable.
+- v2 and all later challengers remain labelled development validation until evaluated on a new untouched source.
+
+## Project status
+
+- ✅ Frozen transaction baseline
+- ✅ Trusted delayed-memory specialist
+- ✅ Jane / Mentalist selective investigator
+- ✅ Cost-aware v2 live router
+- ✅ React + FastAPI product UI
+- ✅ Razorpay Test Mode checkout + server verification
+- ✅ Render deployment
+- ✅ Rejected-challenger ledger
+- ⏳ New untouched evaluation source for unbiased v2 generalization
