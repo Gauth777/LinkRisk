@@ -27,7 +27,8 @@ class LiveLinkRiskEngineV2(LiveLinkRiskEngine):
     1. score v0.5 first;
     2. compute cheap label-free clue families;
     3. invoke the Mentalist model only for evidence-bearing v0.5 ALLOW rows;
-    4. route VERIFY actions through a causal token-bucket capacity controller;
+    4. track causal intervention capacity without vetoing a frozen-threshold
+       Mentalist-positive case;
     5. preserve v0.5 REVIEW unconditionally.
 
     The controller is a streaming engineering policy, not a new held-out-tested
@@ -264,12 +265,19 @@ class LiveLinkRiskEngineV2(LiveLinkRiskEngine):
             final_action = "VERIFY" if capacity_decision.authorized else "ALLOW"
             routing_reason = capacity_decision.reason
         elif mentalist_candidate:
-            capacity_decision = self.capacity_controller.authorize_mentalist_verify()
+            # A frozen-threshold Jane-positive case is operationally actionable.
+            # Capacity remains observable, but the tiny streaming reserve no longer
+            # turns a strong Jane result back into ALLOW in a small live session.
+            capacity_decision = self.capacity_controller.authorize_mentalist_verify(
+                enforce_budget=False,
+            )
             final_action = "VERIFY" if capacity_decision.authorized else "ALLOW"
             routing_reason = capacity_decision.reason
             if mentalist_payload is not None:
                 mentalist_payload["promoted_by_jane"] = bool(capacity_decision.authorized)
-                mentalist_payload["capacity_authorized"] = bool(capacity_decision.authorized)
+                mentalist_payload["capacity_authorized"] = bool(
+                    capacity_decision.budget_authorized
+                )
         elif mentalist_invoked:
             routing_reason = "MENTALIST_SCORE_BELOW_THRESHOLD"
         elif self.mentalist_scorer is not None:
@@ -289,7 +297,9 @@ class LiveLinkRiskEngineV2(LiveLinkRiskEngine):
             "V5_REVIEW_MANDATORY_BUDGET_OVERFLOW": "The frozen v0.5 hard-review decision is immutable; safety overrides the live intervention budget when necessary.",
             "V5_VERIFY_CAPACITY_AUTHORIZED": "The frozen v0.5 VERIFY case was admitted by the causal intervention-capacity controller.",
             "V5_VERIFY_CAPACITY_DEFERRED": "The v0.5 VERIFY request was deferred because the live intervention budget had no token available.",
-            "MENTALIST_CAPACITY_AUTHORIZED": "Present-tense evidence justified Mentalist inference and the causal controller admitted the proactive VERIFY case.",
+            "MENTALIST_CAPACITY_AUTHORIZED": "Present-tense evidence crossed the frozen Mentalist boundary and available live capacity admitted the proactive VERIFY case.",
+            "MENTALIST_PROACTIVE_RESERVE_OVERFLOW": "Present-tense evidence crossed the frozen Mentalist boundary, so the case was promoted to VERIFY while the exhausted Jane reserve was recorded as an operational overflow.",
+            "MENTALIST_PROACTIVE_TOTAL_BUDGET_OVERFLOW": "Present-tense evidence crossed the frozen Mentalist boundary, so the case was promoted to VERIFY while the exhausted total intervention budget was recorded as an operational overflow.",
             "MENTALIST_TOTAL_CAPACITY_DEFERRED": "Mentalist formed an eligible case, but total live intervention capacity was exhausted.",
             "MENTALIST_RESERVE_DEFERRED": "Mentalist formed an eligible case, but its proactive intervention reserve was temporarily exhausted.",
             "MENTALIST_SCORE_BELOW_THRESHOLD": "The evidence gate justified deeper reasoning, but the frozen Mentalist score did not cross its action boundary.",
@@ -306,6 +316,7 @@ class LiveLinkRiskEngineV2(LiveLinkRiskEngine):
         if capacity_decision is not None:
             capacity_payload["decision"] = {
                 "authorized": bool(capacity_decision.authorized),
+                "budget_authorized": bool(capacity_decision.budget_authorized),
                 "reason": capacity_decision.reason,
                 "total_tokens_after": float(capacity_decision.total_tokens_after),
                 "mentalist_tokens_after": float(capacity_decision.mentalist_tokens_after),
