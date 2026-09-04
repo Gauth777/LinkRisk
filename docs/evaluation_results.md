@@ -85,6 +85,87 @@ Selective-reasoning accounting:
 
 This demonstrates the intended engineering principle on development validation: most traffic can use cheaper decision paths while the proactive model is reserved for structurally interesting cases.
 
+## Post-final-test challenger ledger — development only
+
+These experiments were run only after the v1.0 final partition had already been opened. They are therefore **development research**, not new held-out evaluations.
+
+### AutoGluon tabular challenger — REJECT
+
+The experiment used an internal chronological fit/tune split inside the original historical train partition and reported once on the existing development-validation partition. The old final partition was not scored.
+
+Because of environment/dependency limits, the attempted AutoGluon ensemble effectively collapsed to XGBoost rather than producing a diversified ensemble.
+
+| Metric | Challenger | Frozen baseline validation | Delta |
+| --- | ---: | ---: | ---: |
+| PR-AUC | 0.3413 | 0.3496 | -0.0082 |
+| Precision | 53.50% | 50.72% | +2.77 pp |
+| Recall | 25.64% | 28.83% | -3.19 pp |
+| FPR | 0.7926% | 0.9960% | -0.203 pp |
+| TP / FP | 780 / 678 | 877 / 852 | -97 / -174 |
+
+**Decision:** reject. The challenger became more conservative but reduced both recall and PR-AUC.
+
+### Heterogeneous GraphSAGE structural-signal test — REJECT
+
+This was explicitly a **transductive structural-signal feasibility experiment**, not a deployment-valid GNN evaluation. Validation labels were excluded from training, but validation graph structure was visible during message passing. The old final partition was not included in the graph.
+
+Sample used:
+
+- historical graph rows: **120,000**
+- fit rows: **102,000**
+- internal tune rows: **18,000**
+- development-validation rows: **30,000**
+
+Same-slice result:
+
+| Metric | GraphSAGE | Frozen baseline |
+| --- | ---: | ---: |
+| PR-AUC | 0.1452 | 0.4019 |
+| Precision | 26.80% | 66.23% |
+| Recall | 5.02% | 24.61% |
+| FPR | 0.4903% | 0.4488% |
+
+**Decision:** reject as a standalone detector. The graph model was dramatically weaker than the transaction model and did not earn further standalone tuning.
+
+### Causal graph-feature + XGBoost fusion — REJECT
+
+This experiment tested whether causal relationship statistics could add useful signal to the strong transaction model without using future graph structure. Graph-derived features were computed from strictly prior transactions, with same-timestamp rows isolated.
+
+The fusion challenger added **27 causal relationship features** to the **63 raw transaction features** and compared against both a matched tabular-only XGBoost control and the frozen baseline on the same 30,000-row development slice.
+
+| Metric | Matched tabular XGB | Graph + XGB | Frozen baseline |
+| --- | ---: | ---: | ---: |
+| PR-AUC | 0.3772 | 0.3613 | 0.4019 |
+| Precision | 67.81% | 64.42% | 66.23% |
+| Recall | 20.95% | 20.27% | 24.61% |
+| FPR | 0.356% | 0.400% | 0.449% |
+
+Graph fusion versus the matched control:
+
+- PR-AUC: **-0.0159**
+- recall: **-0.68 pp**
+- precision: **-3.40 pp**
+- FPR: **+0.045 pp**
+- TP / FP: **-7 / +13**
+
+**Decision:** reject. The added causal graph features caught fewer frauds while creating more false positives than the matched tabular control.
+
+## What the challenger failures mean
+
+The conclusion is intentionally narrow:
+
+> On the tested IEEE-CIS development protocols, AutoML, standalone GraphSAGE and graph-feature/XGBoost fusion did not improve the frozen transaction baseline enough to justify production complexity.
+
+This does **not** mean graph methods or AutoML are generally ineffective for fraud detection. It means LinkRisk kept only the components that earned their complexity under its own chronological development protocol.
+
+The strongest measured product gains came from:
+
+- trusted delayed feedback;
+- evidence-gated Mentalist reasoning;
+- one-for-one case reallocation;
+- explicit intervention capacity control;
+- selective live inference.
+
 ## Evaluation boundary
 
 The current honest claim is:
