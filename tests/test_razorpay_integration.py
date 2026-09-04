@@ -13,6 +13,7 @@ from backend.razorpay_integration import (
     verify_payment_signature,
     verify_webhook_signature,
 )
+from backend.supabase_store import privacy_safe_identity
 
 
 def _payment(payment_id: str = "pay_demo", order_id: str = "order_demo") -> dict:
@@ -124,3 +125,31 @@ def test_checkout_order_and_idempotency_state() -> None:
     assert status["checkout_orders"] == 1
     assert status["processed_events"] == 1
     assert status["payments_scored"] == 1
+
+
+def test_privacy_safe_identity_is_stable_and_does_not_return_raw_pii() -> None:
+    payment = _payment()
+    first = privacy_safe_identity(payment, "merchant-secret")
+    second = privacy_safe_identity(payment, "merchant-secret")
+
+    assert first == second
+    assert first["contact_masked"] == "******9999"
+    assert first["email_domain"] == "example.com"
+    assert str(first["contact_token"]).startswith("phone:")
+    assert str(first["email_token"]).startswith("email:")
+    assert str(first["customer_token"]).startswith("customer:")
+
+    encoded = repr(first)
+    assert "+919999999999" not in encoded
+    assert "buyer@example.com" not in encoded
+
+
+def test_privacy_safe_identity_changes_with_identity_or_secret() -> None:
+    base = privacy_safe_identity(_payment(), "merchant-secret")
+    other_payment = _payment()
+    other_payment["contact"] = "+918888888888"
+    changed_identity = privacy_safe_identity(other_payment, "merchant-secret")
+    changed_secret = privacy_safe_identity(_payment(), "other-secret")
+
+    assert base["customer_token"] != changed_identity["customer_token"]
+    assert base["customer_token"] != changed_secret["customer_token"]
