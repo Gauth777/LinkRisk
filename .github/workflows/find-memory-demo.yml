@@ -1,0 +1,38 @@
+name: find-memory-demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/find-memory-demo.yml'
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install runtime dependencies
+        run: pip install -r requirements.txt
+      - name: Restore frozen deployment model bundle
+        run: |
+          curl -L --fail --retry 3 \
+            https://github.com/Gauth777/LinkRisk/releases/download/deployment-models-v1/linkrisk-model-bundle.zip \
+            -o /tmp/linkrisk-model-bundle.zip
+          echo "1cf235d24fc884b9844ed65a1fb8363ccc5d0579f8d29b1cae4f83214eb4cc77  /tmp/linkrisk-model-bundle.zip" | sha256sum -c -
+          unzip -o /tmp/linkrisk-model-bundle.zip -d .
+      - name: Search trusted-memory demo pair
+        run: |
+          python scripts/find_trusted_memory_demo.py \
+            --profiles-per-config 1000 \
+            --batch-size 250 \
+            --top 20 \
+            --min-delta 0.03 | tee /tmp/trusted-memory-demo.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trusted-memory-demo
+          path: /tmp/trusted-memory-demo.txt
