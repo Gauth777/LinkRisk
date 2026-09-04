@@ -1,24 +1,3 @@
-.runtime-card b,
-.runtime-card span,
-.sealed-pill span {
-  font-size: 0 !important;
-}
-
-.runtime-card b::after {
-  content: 'Selective v2 runtime';
-  font-size: 0.82rem !important;
-}
-
-.runtime-card span::after {
-  content: 'v1 final evaluated · v2 development';
-  font-size: 0.7rem !important;
-}
-
-.sealed-pill span::after {
-  content: 'v1 final evaluated once';
-  font-size: 0.78rem !important;
-}
-
 /* App.tsx retains its legacy runtime placeholder for layout width only. */
 .live-product-root .runtime-status {
   visibility: hidden;
@@ -176,8 +155,140 @@
   background: rgba(245, 198, 107, 0.08);
 }
 
+/* Live overview telemetry now reflects only the current runtime session. */
+.live-metric-grid .metric-main strong {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Neutral state: no transaction means no decision. */
+.mentalist-empty {
+  margin: 0 18px 14px;
+  padding: 12px 14px;
+  border: 1px dashed rgba(126, 159, 188, .24);
+  border-radius: 9px;
+  background: rgba(10, 24, 38, .42);
+  display: grid;
+  gap: 3px;
+}
+
+.mentalist-empty b {
+  color: #dce9f3;
+  font-size: 11px;
+}
+
+.mentalist-empty span {
+  color: #7f96a9;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.neutral-investigation {
+  padding: 24px;
+  display: grid;
+  gap: 22px;
+}
+
+.neutral-investigation-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: #66d8e6;
+}
+
+.neutral-investigation-head h2 {
+  margin: 0 0 5px;
+  color: #eef5fa;
+  font-size: 18px;
+}
+
+.neutral-investigation-head p {
+  margin: 0;
+  color: #879caf;
+  font-size: 12px;
+}
+
+.neutral-case-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.neutral-case-grid > div {
+  min-height: 108px;
+  padding: 16px;
+  border: 1px solid #21364b;
+  border-radius: 10px;
+  background: rgba(10, 24, 38, .56);
+  display: grid;
+  align-content: center;
+  gap: 8px;
+}
+
+.neutral-case-grid span {
+  color: #8298aa;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.neutral-case-grid strong {
+  color: #e8f1f8;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.neutral-investigation > .primary-button {
+  justify-self: start;
+}
+
+/* v2 architecture: cheap gate before Jane, then explicit capacity-aware routing. */
+.architecture-flow.architecture-v2 {
+  grid-template-columns: minmax(120px, 1fr) 24px minmax(120px, 1fr) 24px minmax(150px, 1.15fr) 24px minmax(130px, 1fr) 24px minmax(160px, 1.2fr);
+  gap: 7px;
+  overflow-x: auto;
+}
+
+.architecture-flow.architecture-v2 > div.gate {
+  color: #65d8e6;
+  border-color: rgba(81, 217, 232, .26);
+  background: rgba(81, 217, 232, .055);
+}
+
+.architecture-flow.architecture-v2 > div span {
+  max-width: 150px;
+  margin: 0 auto;
+  line-height: 1.35;
+}
+
+.architecture-note {
+  min-height: 48px;
+  padding: 11px 18px 14px;
+  border-top: 1px solid #1b3044;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #7f98ab;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.architecture-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #a88cff;
+}
+
+.model-hero > strong small {
+  display: block;
+  margin-top: 3px;
+  text-align: right;
+}
+
 @media (max-width: 1320px) {
   .live-runtime-status {
     left: 236px;
+  }
+
+  .neutral-case-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
