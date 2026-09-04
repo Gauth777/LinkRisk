@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AlertTriangle, ArrowRight, Check, CircleDollarSign, RefreshCw, ShieldCheck, Zap } from 'lucide-react'
+import { operatorRequest } from './api'
 import type { CaseRecord } from './types'
 import './protection.css'
 
@@ -89,8 +90,9 @@ export function ProtectionPanel({ record, preview }: { record: CaseRecord; previ
     setLoading(true)
     setError('')
     try {
-      const result = await postJson<{ ok: boolean; duplicate: boolean; protection: ProtectionRecord }>(
+      const result = await operatorRequest<{ ok: boolean; duplicate: boolean; protection: ProtectionRecord }>(
         `/api/transactions/${encodeURIComponent(record.transaction_id)}/protect/refund`,
+        { method: 'POST' },
       )
       setStatus({ eligible: true, has_response: true, protection: result.protection })
     } catch (err) {

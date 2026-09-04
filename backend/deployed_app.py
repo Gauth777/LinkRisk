@@ -10,6 +10,7 @@ surfaces the deployment problem instead of crashing the web service.
 from pathlib import Path
 
 from backend.api import app, service
+from backend.hardening import LinkRiskHardeningMiddleware
 from backend.merchant_dashboard import build_merchant_dashboard_router
 from backend.protection import build_protection_router
 
@@ -21,6 +22,10 @@ app.include_router(
     )
 )
 app.include_router(build_merchant_dashboard_router())
+
+# Keep operational hardening outside the ML/runtime implementation so scoring,
+# persistence semantics and the React product surface remain unchanged.
+app.add_middleware(LinkRiskHardeningMiddleware)
 
 try:
     service.get()
