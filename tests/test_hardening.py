@@ -10,6 +10,7 @@ from backend.hardening import (
 
 def test_sensitive_operator_routes_are_classified_without_blocking_public_checkout() -> None:
     assert requires_operator("POST", "/api/transactions/TX-1/deep-investigate")
+    assert requires_operator("POST", "/api/transactions/TX-1/jane-escalate")
     assert requires_operator("POST", "/api/transactions/TX-1/adjudicate")
     assert requires_operator("DELETE", "/api/transactions/TX-1/adjudication")
     assert requires_operator("POST", "/api/transactions/TX-1/protect/refund")
@@ -28,6 +29,7 @@ def test_stateful_scoring_and_feedback_mutations_are_serialized() -> None:
     assert is_serialized_engine_operation("POST", "/api/webhooks/razorpay")
     assert is_serialized_engine_operation("POST", "/api/transactions")
     assert is_serialized_engine_operation("POST", "/api/transactions/TX-1/deep-investigate")
+    assert is_serialized_engine_operation("POST", "/api/transactions/TX-1/jane-escalate")
     assert is_serialized_engine_operation("POST", "/api/transactions/TX-1/adjudicate")
     assert is_serialized_engine_operation("DELETE", "/api/transactions/TX-1/adjudication")
     assert is_serialized_engine_operation("POST", "/api/session/advance")
@@ -40,6 +42,11 @@ def test_stateful_scoring_and_feedback_mutations_are_serialized() -> None:
 def test_public_checkout_rate_limit_still_allows_structured_twenty_payment_demo() -> None:
     policy = rate_limit_policy("POST", "/api/integrations/razorpay/orders")
     assert policy == ("razorpay_orders", 30, 60.0)
+    assert rate_limit_policy("POST", "/api/transactions/TX-1/jane-escalate") == (
+        "jane_operator_escalation",
+        20,
+        60.0,
+    )
 
 
 def test_sliding_window_limiter_blocks_only_after_limit_and_recovers() -> None:
