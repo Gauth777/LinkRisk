@@ -5,6 +5,7 @@ import LiveEfficiencyStrip from './LiveEfficiencyStrip'
 import LiveRuntimeStatus from './LiveRuntimeStatus'
 import { PersistentPaymentsPortal } from './PersistentPaymentsPortal'
 import './demoScenarios.css'
+import './identity-overrides.css'
 import './v2Overrides.css'
 
 type ProductMode = 'live' | 'demo'
