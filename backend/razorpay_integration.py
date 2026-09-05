@@ -4,6 +4,10 @@ The integration deliberately separates Razorpay payment fields from merchant-sid
 telemetry. Razorpay does not provide payer browser/device telemetry in the
 standard Payment entity, so absent telemetry is represented by payment-unique
 unknown contexts rather than invented shared identities.
+
+Customer recurrence is derived server-side from the authoritative Razorpay
+Payment entity. Client-supplied ``payment_profile`` values are never trusted as
+payer identity for scoring.
 """
 
 from __future__ import annotations
@@ -11,11 +15,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import hmac
+import os
 from threading import Lock
 from typing import Any, Mapping
 
 import requests
 
+from backend.supabase_store import privacy_safe_identity
 from linkrisk.live_engine import LiveTransactionInput
 
 
@@ -33,6 +39,11 @@ class MerchantTelemetry:
 
     ``reference_id`` should normally be the Razorpay order id. It may also be a
     payment id if telemetry becomes available only after checkout.
+
+    ``payment_profile`` is retained only for backward compatibility with older
+    demo/session payloads. It is not trusted as customer identity by the Razorpay
+    scoring adapter; authoritative Payment contact/email are pseudonymised
+    server-side instead.
     """
 
     reference_id: str
@@ -235,7 +246,7 @@ def _email_domain(value: Any) -> str:
 
 
 def _pseudonymous_profile(payment: Mapping[str, Any]) -> str:
-    """Create a stable non-raw profile token when merchant profile id is absent."""
+    """Create a non-raw fallback profile when no server identity key is available."""
     material = "|".join(
         str(payment.get(key) or "")
         for key in ("email", "contact", "order_id")
@@ -244,6 +255,34 @@ def _pseudonymous_profile(payment: Mapping[str, Any]) -> str:
         material = str(payment.get("id") or "unknown")
     digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
     return f"rzp-profile-{digest}"
+
+
+def _server_identity_secret(explicit: str | None = None) -> str:
+    """Resolve the server-only key used to pseudonymise authoritative payer identity."""
+    if explicit and explicit.strip():
+        return explicit.strip()
+    return (
+        os.getenv("LINKRISK_IDENTITY_SECRET", "").strip()
+        or os.getenv("RAZORPAY_KEY_SECRET", "").strip()
+        or os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
+    )
+
+
+def _risk_profile_from_payment(payment: Mapping[str, Any], identity_secret: str | None = None) -> str:
+    """Return a stable privacy-safe recurring profile for risk features.
+
+    Priority is deliberately phone -> email -> payment-specific customer token.
+    This keeps a verified phone stable even if a payer changes email while raw
+    PII never enters the feature adapter.
+    """
+    secret = _server_identity_secret(identity_secret)
+    if secret:
+        identity = privacy_safe_identity(payment, secret)
+        for key in ("contact_token", "email_token", "customer_token"):
+            token = identity.get(key)
+            if token:
+                return str(token)
+    return _pseudonymous_profile(payment)
 
 
 def _card_fields(payment: Mapping[str, Any]) -> tuple[str, str]:
@@ -259,13 +298,20 @@ def _card_fields(payment: Mapping[str, Any]) -> tuple[str, str]:
 def normalize_payment_to_live_input(
     payment: Mapping[str, Any],
     telemetry: MerchantTelemetry | None,
+    *,
+    identity_secret: str | None = None,
 ) -> LiveTransactionInput:
     """Map a Razorpay Payment entity + optional merchant telemetry into LinkRisk.
 
-    Amount is converted from Razorpay currency subunits to major units. The
-    current trained feature adapter remains IEEE-CIS-specific; this function is
-    therefore an integration adapter, not a claim that Razorpay fields have the
-    same semantics as the masked training columns.
+    Amount is converted from Razorpay currency subunits to major units. Customer
+    recurrence is derived from authoritative Razorpay contact/email and converted
+    to an HMAC token before entering the model. ``telemetry.payment_profile`` is
+    intentionally ignored. Merchant telemetry may still contribute device,
+    browser, receiver and product context.
+
+    The current trained feature adapter remains IEEE-CIS-specific; this function
+    is therefore an integration adapter, not a claim that Razorpay fields have
+    the same semantics as the masked training columns.
     """
     payment_id = str(payment.get("id") or "").strip()
     if not payment_id:
@@ -279,18 +325,17 @@ def normalize_payment_to_live_input(
         raise ValueError("payment amount cannot be negative")
 
     network, card_type = _card_fields(payment)
+    payment_profile = _risk_profile_from_payment(payment, identity_secret)
 
     if telemetry is None:
         # Do not collapse missing telemetry into one shared context: doing so
         # could create synthetic coordination/reuse evidence.
-        payment_profile = _pseudonymous_profile(payment)
         device_info = f"unknown-device:{payment_id}"
         browser_context = f"unknown-browser:{payment_id}"
         receiver_domain = "merchant.local"
         device_type = "unknown"
         product_code = "W"
     else:
-        payment_profile = telemetry.payment_profile
         device_info = telemetry.device_info
         browser_context = telemetry.browser_context
         receiver_domain = telemetry.receiver_domain
@@ -319,6 +364,12 @@ def integration_metadata(
     telemetry: MerchantTelemetry | None,
     source: str = "razorpay_webhook",
 ) -> dict[str, Any]:
+    telemetry_payload = asdict(telemetry) if telemetry is not None else None
+    if telemetry_payload is not None:
+        # Legacy client profile names are not authoritative payer identity and
+        # should not be copied into new durable integration events.
+        telemetry_payload.pop("payment_profile", None)
+
     return {
         "source": source,
         "event_type": event_type,
@@ -330,6 +381,7 @@ def integration_metadata(
         "currency": payment.get("currency"),
         "created_at": payment.get("created_at"),
         "merchant_telemetry_attached": telemetry is not None,
-        "merchant_telemetry": asdict(telemetry) if telemetry is not None else None,
+        "merchant_telemetry": telemetry_payload,
+        "risk_identity": "server_pseudonymous_authoritative_payment",
         "raw_payer_ip_used": False,
     }
