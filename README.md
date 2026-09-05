@@ -11,26 +11,32 @@ LinkRisk is a defensive two-stage payment-risk system for **coordinated payment 
 ```text
 PAYMENT
    ↓
-Measured hard detector
+Frozen v0.5 scoring
+(transaction intelligence + causal relationship features + matured trusted feedback)
    ↓
-REVIEW when the frozen hard boundary is crossed
-   │
-   └── otherwise → Jane / Mentalist verifier
-                     ↓
-             relationship evidence
-                     ↓
-                 ALLOW / VERIFY
-                     ↓
-             analyst resolution
-                     ↓
-            delayed merchant memory
+v0.5 operational action
+   ├── REVIEW ───────────────→ hard detector positive
+   ├── VERIFY ───────────────→ v0.5 verification routing
+   └── ALLOW
+         ↓
+   cheap evidence gate
+      ├── bypass ────────────→ ALLOW
+      └── evidence-bearing ──→ Jane / Mentalist verifier
+                                  ↓
+                              ALLOW / VERIFY
+                                  ↓
+                         merchant risk queue
+                                  ↓
+                         analyst resolution
+                                  ↓
+                      fixed delayed merchant memory
 ```
 
 The distinction is deliberate:
 
 - **REVIEW** = hard detector positive;
 - **VERIFY** = additional defensive verification / investigation, not a fraud conviction;
-- **Jane** = the central relationship-aware verifier that looks for suspicious patterns around otherwise ordinary-looking payments.
+- **Jane** = the central relationship-aware verifier for evidence-bearing cases below the hard REVIEW boundary that a transaction-only view may miss.
 
 The complete metric and claim contract is frozen in [`docs/SUBMISSION_CONTRACT.md`](docs/SUBMISSION_CONTRACT.md).
 
@@ -70,6 +76,8 @@ A transaction can score below the hard REVIEW boundary while its surrounding beh
 
 Jane's proactive features do **not** consume confirmed-fraud labels.
 
+In the deployed selective runtime, automatic Jane inference is reserved for **evidence-bearing v0.5 `ALLOW` rows**. Existing v0.5 `REVIEW` decisions remain immutable, and v0.5 `VERIFY` cases do not require Jane in order to remain verification candidates.
+
 #### Jane v1 — held-out evidence
 
 The original Mentalist-routed policy was evaluated on the same one-shot chronological held-out set.
@@ -105,6 +113,8 @@ Jane was invoked on only **2.27%** of development-validation traffic and bypasse
 
 These v2 figures are **development validation only**. The original held-out partition had already been opened and is not reused as a fresh v2 test.
 
+**Runtime note:** the **6.00% intervention share is the fixed development-validation comparison budget**, not a claim that the current streaming demo hard-caps every session at exactly 6%. In the deployed runtime, capacity remains observable, but a case that crosses Jane's frozen verifier boundary is not downgraded solely because the small live reserve is exhausted; the overflow is recorded instead.
+
 ## Action semantics
 
 ```text
@@ -134,30 +144,74 @@ CSV → classifier → fraud score → dashboard
 LinkRisk implements a complete defensive loop:
 
 ```text
-Razorpay Test payment + merchant context
-              ↓
-     transaction intelligence
-              ↓
-    trusted relationship memory
-              ↓
-      hard REVIEW detector
-              │
-              └── non-REVIEW traffic
-                        ↓
-                  evidence gate
-                    /       \
-                bypass     Jane
-                           verifier
-                              ↓
-                    ALLOW / VERIFY
-                              ↓
-                       analyst queue
-                              ↓
-                 fraud / legitimate outcome
-                              ↓
-                    fixed delayed trust
-                              ↓
-                 future related payments
+                         LINKRISK
+
+                 Razorpay Test Checkout
+                          │
+                          ▼
+            server verifies Checkout signature
+                          │
+                          ▼
+             fetch authoritative Payment
+                          │
+               ┌──────────┴───────────┐
+               │                      │
+               ▼                      ▼
+    privacy-safe recurring      merchant-observed
+       HMAC identity               telemetry
+               │                      │
+               └──────────┬───────────┘
+                          ▼
+                 LiveTransactionInput
+                          │
+                          ▼
+        ┌─────────────────────────────────┐
+        │       FROZEN v0.5 SCORER        │
+        │                                 │
+        │ transaction intelligence        │
+        │ + causal relationship features  │
+        │ + matured trusted feedback      │
+        └────────────────┬────────────────┘
+                         │
+                v0.5 operational action
+                         │
+            ┌────────────┼─────────────┐
+            ▼            ▼             ▼
+         REVIEW        VERIFY         ALLOW
+            │            │              │
+            │            │       cheap evidence gate
+            │            │          ┌───┴────┐
+            │            │          │        │
+            │            │       bypass     Jane
+            │            │                    │
+            │            │          relationship-aware
+            │            │              verifier
+            │            │                    │
+            │            │               ALLOW / VERIFY
+            └────────────┴──────────────┬─────┘
+                                       ▼
+                              merchant risk queue
+                                       │
+                              ALLOW / VERIFY / REVIEW
+                                       │
+                                       ▼
+                              analyst adjudication
+                              fraud / legitimate
+                                       │
+                                       ▼
+                              fixed 72h trust delay
+                                       │
+                                       ▼
+                         persistent merchant memory
+                              Supabase-backed
+                                       │
+                                       └────► future payments
+```
+
+Conceptually:
+
+```text
+DETECT → INVESTIGATE → VERIFY → RESOLVE → REMEMBER
 ```
 
 Key product capabilities:
@@ -172,6 +226,7 @@ Key product capabilities:
 - explicit operator escalation;
 - persistent Supabase-backed operational ledger;
 - Razorpay Test Mode checkout and server-side verification;
+- privacy-safe recurring customer context derived server-side;
 - ALLOW / VERIFY / REVIEW case management;
 - false-positive and intervention telemetry.
 
@@ -228,7 +283,7 @@ fetch authoritative Razorpay Payment
       ↓
 order + amount + currency + status checks
       ↓
-LinkRisk scoring / verification
+privacy-safe identity + LinkRisk scoring / verification
 ```
 
 An optional signed webhook ingestion path also exists at `POST /api/webhooks/razorpay`.
@@ -237,7 +292,13 @@ Razorpay's standard Payment entity does not expose all browser/device/session co
 
 ## Privacy and merchant memory
 
-Persistent operational state is server-side. LinkRisk uses masked display values and stable HMAC identity tokens rather than exposing raw contact identifiers to the risk graph.
+Persistent operational state is server-side. After Razorpay Checkout verification, recurring risk identity is derived from the **authoritative Razorpay Payment**, not a client-controlled profile name:
+
+1. stable HMAC contact/phone token when available;
+2. otherwise a stable HMAC email token;
+3. otherwise a customer/payment-specific HMAC fallback.
+
+Raw phone numbers and emails do not enter the risk graph/model identity field, and newly persisted integration metadata does not copy legacy client `payment_profile` values as payer identity.
 
 Adjudicated outcomes do not become trusted immediately. The feedback layer applies the frozen delayed-trust rule before confirmed outcomes can influence future related transactions.
 
@@ -252,6 +313,33 @@ Adjudicated outcomes do not become trusted immediately. The feedback layer appli
 - Scores are ranking signals, not calibrated probabilities.
 - Operator overrides are kept separate from the original model decision.
 - The v1 held-out evaluation is immutable and is not retuned.
+- Missing payer device/browser telemetry is represented as payment-unique unknown context rather than fabricated shared identity.
+
+## Repository architecture
+
+```text
+frontend/          React merchant risk console and cinematic product entry
+backend/           FastAPI, Razorpay integration, Supabase persistence and operations
+src/linkrisk/      ML scoring, causal relationship features, Jane and live routing
+tests/             Runtime, integration, privacy and safety regression tests
+docs/              Evaluation ledger, failure modes and frozen submission contract
+.github/workflows/ Product CI
+```
+
+Important implementation files include:
+
+```text
+src/linkrisk/live_engine_v2.py
+src/linkrisk/relationship_features_v4.py
+src/linkrisk/feedback_features_v5.py
+src/linkrisk/mentalist_features_v7.py
+src/linkrisk/cost_aware_router_v2.py
+backend/api.py
+backend/razorpay_checkout.py
+backend/razorpay_integration.py
+backend/supabase_store.py
+backend/jane_operations.py
+```
 
 ## Reproduction
 
@@ -332,6 +420,7 @@ Raw IEEE-CIS data and trained binary artifacts are not committed.
 - ✅ analyst investigation and operator escalation
 - ✅ React + FastAPI product
 - ✅ Razorpay Test Mode checkout verification
+- ✅ privacy-safe authoritative-payment recurring identity
 - ✅ Supabase-backed persistent operational ledger
 - ✅ Render deployment
 - ⏳ new untouched evaluation source for unbiased post-v1 orchestration generalization
