@@ -8,6 +8,7 @@ from backend.razorpay_integration import (
     MerchantTelemetry,
     RazorpayIntegrationState,
     fallback_event_id,
+    integration_metadata,
     normalize_payment_to_live_input,
     payment_entity_from_webhook,
     verify_payment_signature,
@@ -68,8 +69,8 @@ def test_payment_entity_parser_requires_payment_entity() -> None:
 
 
 def test_missing_merchant_telemetry_does_not_create_shared_device_context() -> None:
-    first = normalize_payment_to_live_input(_payment("pay_a", "order_a"), None)
-    second = normalize_payment_to_live_input(_payment("pay_b", "order_b"), None)
+    first = normalize_payment_to_live_input(_payment("pay_a", "order_a"), None, identity_secret="merchant-secret")
+    second = normalize_payment_to_live_input(_payment("pay_b", "order_b"), None, identity_secret="merchant-secret")
 
     assert first.amount == 1250.0
     assert first.device_info != second.device_info
@@ -78,9 +79,12 @@ def test_missing_merchant_telemetry_does_not_create_shared_device_context() -> N
     assert first.card_network == "visa"
     assert first.card_type == "debit"
     assert first.payer_domain == "example.com"
+    # Recurring payer identity remains stable even though missing device/browser
+    # telemetry is deliberately payment-specific.
+    assert first.payment_profile == second.payment_profile
 
 
-def test_registered_order_telemetry_enriches_payment() -> None:
+def test_registered_order_telemetry_enriches_context_but_not_customer_identity() -> None:
     state = RazorpayIntegrationState()
     telemetry = MerchantTelemetry(
         reference_id="order_demo",
@@ -95,14 +99,92 @@ def test_registered_order_telemetry_enriches_payment() -> None:
 
     payment = _payment()
     matched = state.telemetry_for_payment(payment)
-    event = normalize_payment_to_live_input(payment, matched)
+    event = normalize_payment_to_live_input(payment, matched, identity_secret="merchant-secret")
+    expected_identity = privacy_safe_identity(payment, "merchant-secret")["contact_token"]
 
     assert matched == telemetry
-    assert event.payment_profile == "CUSTOMER-42"
+    assert event.payment_profile == expected_identity
+    assert event.payment_profile != "CUSTOMER-42"
     assert event.device_info == "Chrome / Windows"
     assert event.browser_context == "session-device-42"
     assert event.receiver_domain == "merchant.example"
     assert event.product_code == "R"
+
+
+def test_same_authoritative_phone_maps_to_same_profile_even_with_different_client_profiles() -> None:
+    first_payment = _payment("pay_a", "order_a")
+    second_payment = _payment("pay_b", "order_b")
+    second_payment["email"] = "changed@example.net"
+
+    first_telemetry = MerchantTelemetry(
+        reference_id="order_a",
+        payment_profile="ALPHA-A",
+        device_info="Chrome / Windows",
+        browser_context="ctx-a",
+    )
+    second_telemetry = MerchantTelemetry(
+        reference_id="order_b",
+        payment_profile="TOTALLY-DIFFERENT",
+        device_info="Safari / macOS",
+        browser_context="ctx-b",
+    )
+
+    first = normalize_payment_to_live_input(first_payment, first_telemetry, identity_secret="merchant-secret")
+    second = normalize_payment_to_live_input(second_payment, second_telemetry, identity_secret="merchant-secret")
+
+    assert first.payment_profile == second.payment_profile
+    assert str(first.payment_profile).startswith("phone:")
+    assert first.payment_profile not in {"ALPHA-A", "TOTALLY-DIFFERENT"}
+
+
+def test_different_authoritative_phone_maps_to_different_profile() -> None:
+    first_payment = _payment("pay_a", "order_a")
+    second_payment = _payment("pay_b", "order_b")
+    second_payment["contact"] = "+918888888888"
+
+    first = normalize_payment_to_live_input(first_payment, None, identity_secret="merchant-secret")
+    second = normalize_payment_to_live_input(second_payment, None, identity_secret="merchant-secret")
+
+    assert first.payment_profile != second.payment_profile
+
+
+def test_email_is_stable_fallback_when_authoritative_phone_is_missing() -> None:
+    first_payment = _payment("pay_a", "order_a")
+    second_payment = _payment("pay_b", "order_b")
+    first_payment["contact"] = ""
+    second_payment["contact"] = ""
+
+    first = normalize_payment_to_live_input(first_payment, None, identity_secret="merchant-secret")
+    second = normalize_payment_to_live_input(second_payment, None, identity_secret="merchant-secret")
+
+    assert first.payment_profile == second.payment_profile
+    assert str(first.payment_profile).startswith("email:")
+
+
+def test_model_input_and_new_integration_metadata_do_not_contain_raw_pii_or_client_profile() -> None:
+    payment = _payment()
+    telemetry = MerchantTelemetry(
+        reference_id="order_demo",
+        payment_profile="CLIENT-SUPPLIED-PROFILE",
+        device_info="Chrome / Windows",
+        browser_context="ctx",
+    )
+    event = normalize_payment_to_live_input(payment, telemetry, identity_secret="merchant-secret")
+    metadata = integration_metadata(
+        event_type="checkout.verified",
+        event_id="evt_demo",
+        payment=payment,
+        telemetry=telemetry,
+        source="razorpay_checkout_verify",
+    )
+
+    encoded_event = repr(event)
+    encoded_metadata = repr(metadata)
+    assert "+919999999999" not in encoded_event
+    assert "buyer@example.com" not in encoded_event
+    assert "CLIENT-SUPPLIED-PROFILE" not in encoded_event
+    assert "CLIENT-SUPPLIED-PROFILE" not in encoded_metadata
+    assert metadata["risk_identity"] == "server_pseudonymous_authoritative_payment"
 
 
 def test_checkout_order_and_idempotency_state() -> None:
