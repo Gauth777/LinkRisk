@@ -29,7 +29,6 @@ from linkrisk.live_engine import LiveLinkRiskEngine
 
 class CheckoutOrderRequest(BaseModel):
     amount: float = Field(gt=0, le=10_000_000)
-    payment_profile: str = Field(min_length=1, max_length=120)
     device_info: str = Field(min_length=1, max_length=160)
     browser_context: str = Field(min_length=1, max_length=160)
     receiver_domain: str = Field(default="merchant.local", min_length=1, max_length=160)
@@ -105,6 +104,7 @@ def build_checkout_router(
             "test_mode": key_id.startswith("rzp_test_"),
             "key_id": key_id if key_id.startswith("rzp_test_") else None,
             "secret_exposed": False,
+            "risk_identity": "authoritative_payment_hmac",
             "merchant_memory": merchant_store.status(),
         }
 
@@ -137,7 +137,9 @@ def build_checkout_router(
         state.register_telemetry(
             MerchantTelemetry(
                 reference_id=order_id,
-                payment_profile=request.payment_profile,
+                # Legacy field retained inside MerchantTelemetry for old session
+                # compatibility only. Razorpay scoring ignores it as identity.
+                payment_profile="client-profile-ignored",
                 device_info=request.device_info,
                 browser_context=request.browser_context,
                 receiver_domain=request.receiver_domain,
@@ -216,7 +218,11 @@ def build_checkout_router(
 
         telemetry = state.telemetry_for_payment(payment)
         try:
-            live_input = normalize_payment_to_live_input(payment, telemetry)
+            live_input = normalize_payment_to_live_input(
+                payment,
+                telemetry,
+                identity_secret=merchant_store.identity_secret,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
