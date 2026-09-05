@@ -1,0 +1,10 @@
+/*
+ * Razorpay payer recurrence is derived server-side from the authoritative
+ * verified Payment entity. The legacy payment-profile field remains in App.tsx
+ * only so older frontend payload construction stays backward compatible; it is
+ * deliberately hidden from the public New Payment form and ignored by the
+ * checkout API/model adapter.
+ */
+.modal .form-grid > label:nth-child(2) {
+  display: none;
+}
