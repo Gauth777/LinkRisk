@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import App from './App'
 import DemoScenarios from './DemoScenarios'
+import EntryExperience from './EntryExperience'
 import LiveEfficiencyStrip from './LiveEfficiencyStrip'
 import LiveRuntimeStatus from './LiveRuntimeStatus'
 import { PersistentPaymentsPortal } from './PersistentPaymentsPortal'
@@ -11,7 +12,10 @@ import './v2Overrides.css'
 type ProductMode = 'live' | 'demo'
 
 export default function ProductRoot() {
+  const [entered, setEntered] = useState(false)
   const [mode, setMode] = useState<ProductMode>('live')
+
+  if (!entered) return <EntryExperience onEnter={() => setEntered(true)} />
 
   return <>
     <div className="product-mode-switch" role="group" aria-label="Product mode">
